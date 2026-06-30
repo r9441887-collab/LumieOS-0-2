@@ -1,0 +1,15 @@
+// syscall-demo.lc — Demonstrate syscalls
+/* @public */
+int lumiec_main(void) {
+    char *hello = "LumieC: syscall test\n";
+    syscall1(0x01, (i64)hello);
+
+    // Get cursor position
+    i64 x, y;
+    syscall2(0x10, (i64)&x, (i64)&y);
+
+    // Draw a pixel
+    syscall3(0x20, 100, 100, 0x00FF00);  // green pixel
+
+    return 0;
+}

@@ -1,0 +1,10 @@
+[package]
+name = "lumieos-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumie_std = { path = "../libs/lumie_std" }
+
+[lib]
+crate-type = ["staticlib", "lib"]

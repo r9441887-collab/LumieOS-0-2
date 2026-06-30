@@ -1,0 +1,7 @@
+// hello.lc — Minimal LumieC program
+/* @public */
+int lumiec_main(void) {
+    char *msg = "Hello from LumieC!\n";
+    syscall1(0x01, (i64)msg);  // sys_write
+    return 0;
+}

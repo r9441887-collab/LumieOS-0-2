@@ -1,0 +1,11 @@
+[package]
+name = "lumieos-loader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumie_std = { path = "../libs/lumie_std" }
+lumieos_kernel = { path = "../kernel" }
+
+[lib]
+crate-type = ["staticlib", "lib"]
