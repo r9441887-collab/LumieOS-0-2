@@ -1,5 +1,3 @@
-use crate::types::*;
-
 pub const LUMIE_MAGIC_LKRN: u32 = 0x4E4D554C;
 pub const LUMIE_MAGIC_LDRV: u32 = 0x5652444C;
 pub const LUMIE_MAGIC_LSH: u32 = 0x48534C4C;

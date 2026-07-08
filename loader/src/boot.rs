@@ -1,23 +1,11 @@
-#![no_std]
 
-use core::ffi::c_void;
-use core::ptr;
-
-extern "C" {
-    fn fat_exists(path: *const u8) -> i32;
-    fn fat_read_file(path: *const u8, buf: *mut c_void, max: u32) -> i32;
-    fn fat_get_file_size(path: *const u8) -> i32;
-    fn pit_stall(us: u32);
-    fn gop_get_width() -> u32;
-    fn gop_get_height() -> u32;
-    fn gop_fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32);
-    fn gop_draw_string(x: u32, y: u32, fg: u32, bg: u32, s: *const u8);
-}
+use crate::ffi::*;
 
 pub fn lumieos_installed() -> bool {
     unsafe { fat_exists(b"/system/kernel.lkrn\0" as *const u8) == 1 }
 }
 
+#[allow(dead_code)]
 fn copy_str_to_buf(buf: &mut [u8], s: &[u8]) {
     let mut i = 0;
     while i < buf.len() - 1 && i < s.len() {

@@ -1,4 +1,3 @@
-#![no_std]
 
 use core::ffi::c_void;
 use core::ptr;
@@ -16,7 +15,7 @@ pub struct LoaderBlockDevice {
 type EfiBlockIoReadBlocks =
     Option<unsafe extern "efiapi" fn(*mut c_void, u32, u64, u64, *mut c_void) -> u64>;
 
-#[repr(C)]
+#[repr(C, packed)]
 struct EfiBlockIoMedia {
     pub media_id: u32,
     pub removable_media: u8,
@@ -25,7 +24,8 @@ struct EfiBlockIoMedia {
     pub read_only: u8,
     pub write_caching: u8,
     pub pad: [u8; 3],
-    pub block_size: u64,
+    pub block_size: u32,
+    pub io_align: u32,
     pub last_block: u64,
     pub lowest_aligned_lba: u64,
     pub logical_blocks_per_physical_block: u32,
@@ -88,7 +88,7 @@ pub fn loader_enum_block_devices(bs: &EfiBootServices, devices: &mut [LoaderBloc
         }
 
         let media_ref = unsafe { &*media };
-        if media_ref.media_present == 0 && media_ref.removable_media == 0 {
+        if media_ref.media_present == 0 {
             continue;
         }
 
@@ -123,17 +123,17 @@ pub fn loader_enum_block_devices(bs: &EfiBootServices, devices: &mut [LoaderBloc
             }
         }
 
-        let r = if devices[count as usize].is_removable != 0 {
-            b"USB Flash"
+        let r: &[u8] = if devices[count as usize].is_removable != 0 {
+            &b"USB Flash"[..]
         } else {
-            b"Disk"
+            &b"Disk    "[..]
         };
         let mut label = [0u8; 64];
-        let mut lp = 0;
+        let mut _lp = 0;
         for &c in r {
-            if lp < 63 {
-                label[lp] = c;
-                lp += 1;
+            if _lp < 63 {
+                label[_lp] = c;
+                _lp += 1;
             }
         }
 
@@ -150,23 +150,23 @@ pub fn loader_enum_block_devices(bs: &EfiBootServices, devices: &mut [LoaderBloc
                 vol[11] = 0;
                 let tag = b" [FAT32: ";
                 for &c in tag {
-                    if lp < 63 { label[lp] = c; lp += 1; }
+                    if _lp < 63 { label[_lp] = c; _lp += 1; }
                 }
                 for &c in vol.iter() {
                     if c == 0 { break; }
-                    if lp < 63 { label[lp] = c; lp += 1; }
+                    if _lp < 63 { label[_lp] = c; _lp += 1; }
                 }
-                if lp < 63 { label[lp] = b']'; lp += 1; }
+                if _lp < 63 { label[_lp] = b']'; _lp += 1; }
             } else {
                 let tag = b" (Partition)";
-                for &c in tag { if lp < 63 { label[lp] = c; lp += 1; } }
+                for &c in tag { if _lp < 63 { label[_lp] = c; _lp += 1; } }
             }
         } else if devices[count as usize].is_removable != 0 {
             let tag = b" (Removable)";
-            for &c in tag { if lp < 63 { label[lp] = c; lp += 1; } }
+            for &c in tag { if _lp < 63 { label[_lp] = c; _lp += 1; } }
         } else {
             let tag = b" (Fixed)";
-            for &c in tag { if lp < 63 { label[lp] = c; lp += 1; } }
+            for &c in tag { if _lp < 63 { label[_lp] = c; _lp += 1; } }
         }
 
         devices[count as usize].label = label;
@@ -184,7 +184,6 @@ pub fn loader_enum_block_devices(bs: &EfiBootServices, devices: &mut [LoaderBloc
 pub fn loader_show_device_menu(devices: &[LoaderBlockDevice]) -> i32 {
     let count = devices.len();
     if count == 0 { return -1; }
-    if count == 1 { return 0; }
 
     let bg = crate::display::ld_make_color(0x00, 0x00, 0x80);
     let white = crate::display::ld_make_color(0xFF, 0xFF, 0xFF);
@@ -196,7 +195,7 @@ pub fn loader_show_device_menu(devices: &[LoaderBlockDevice]) -> i32 {
     let logo_y = scr_h / 5;
     let line_h = 20u32;
 
-    let mut sel: i32 = 0;
+    let mut sel: i32 = -1;
     let mut page_offset: i32 = 0;
     let max_visible = ((scr_h - logo_y - 60) / line_h) as i32;
     let max_visible = if max_visible < 1 { 1 } else { max_visible };
@@ -281,7 +280,7 @@ pub fn loader_show_device_menu(devices: &[LoaderBlockDevice]) -> i32 {
                 let mut item_y = (logo_y + 3 * line_h) as i32;
                 for i in page_offset..end {
                     if cy >= item_y && cy < item_y + line_h as i32
-                        && cx as u32 >= scr_w / 4 && cx as u32 < scr_w / 4 + 400
+                        && cx as u32 >= scr_w / 4 && (cx as u32) < scr_w / 4 + 400
                     {
                         sel = i;
                         return sel;
@@ -291,10 +290,19 @@ pub fn loader_show_device_menu(devices: &[LoaderBlockDevice]) -> i32 {
             }
             if !crate::input::loader_kbhit() { continue; }
             let c = crate::input::loader_getchar();
-            if c == b'\n' as i32 { return sel; }
+            if c == b'\n' as i32 { if sel >= 0 { return sel; } break; }
             if c == 0x1B { return -1; }
-            if c == 0xE1 { if sel > 0 { sel -= 1; if sel < page_offset { page_offset = sel; } } break; }
-            if c == 0xE2 { if sel < count as i32 - 1 { sel += 1; if sel >= page_offset + max_visible { page_offset = sel - max_visible + 1; } } break; }
+            if c == 0xE1 {
+                if sel <= 0 { sel = 0; } else { sel -= 1; }
+                if sel < page_offset { page_offset = sel; }
+                break;
+            }
+            if c == 0xE2 {
+                if sel < 0 { sel = 0; }
+                else if sel < count as i32 - 1 { sel += 1; }
+                if sel >= page_offset + max_visible { page_offset = sel - max_visible + 1; }
+                break;
+            }
         }
     }
 }

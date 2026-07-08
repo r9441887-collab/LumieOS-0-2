@@ -1,7 +1,3 @@
-#![no_std]
-
-use core::ptr;
-use crate::uefi::*;
 
 pub fn ld_make_color(r: u8, g: u8, b: u8) -> u32 {
     let fb = unsafe { crate::gop_get_fb() };
@@ -9,6 +5,8 @@ pub fn ld_make_color(r: u8, g: u8, b: u8) -> u32 {
         let fmt = unsafe { (*fb).pixel_format };
         if fmt == 0 {
             return (r as u32) | ((g as u32) << 8) | ((b as u32) << 16);
+        } else {
+            return (r as u32) << 16 | ((g as u32) << 8) | (b as u32);
         }
     }
     (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)

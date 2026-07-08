@@ -1,26 +1,31 @@
 #![no_std]
-#![feature(abi_efiapi)]
-#![feature(naked_functions)]
 
 extern crate lumie_std;
 
-mod uefi;
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+
+pub mod uefi;
+mod ffi;
+pub use crate::ffi::*;
 pub mod display;
 pub mod input;
 pub mod devices;
 pub mod install;
 pub mod boot;
+pub mod gpt;
+pub mod font;
 
 use core::ffi::c_void;
 use core::ptr;
-use lumie_std::types::*;
 use crate::uefi::*;
 
 /* ------------------------------------------------------------------ */
 /*  C-compatible structs                                              */
 /* ------------------------------------------------------------------ */
 
-#[repr(C)]
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct FbInfo {
@@ -37,10 +42,10 @@ pub struct FbInfo {
 #[derive(Copy, Clone)]
 pub struct SysBootInfo {
     pub version: u32,
-    pub alloc: Option<unsafe extern "C" fn(u32) -> *mut c_void>,
-    pub free: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub log: Option<unsafe extern "C" fn(*const u8)>,
-    pub log_hex: Option<unsafe extern "C" fn(u64)>,
+    pub alloc: Option<unsafe fn(u32) -> *mut c_void>,
+    pub free: Option<unsafe fn(*mut c_void)>,
+    pub log: Option<unsafe fn(*const u8)>,
+    pub log_hex: Option<unsafe fn(u64)>,
     pub gop_fb_base: u64,
     pub gop_width: u32,
     pub gop_height: u32,
@@ -57,81 +62,6 @@ pub struct SysModule {
     pub entry: *mut c_void,
 }
 
-/* ------------------------------------------------------------------ */
-/*  FFI — external C functions                                        */
-/* ------------------------------------------------------------------ */
-
-extern "C" {
-    pub fn gop_init(image_handle: efi_handle, st: *mut EfiSystemTable) -> u64;
-    pub fn gop_get_width() -> u32;
-    pub fn gop_get_height() -> u32;
-    pub fn gop_fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32);
-    pub fn gop_draw_string(x: u32, y: u32, fg: u32, bg: u32, s: *const u8);
-    pub fn gop_put_pixel(x: u32, y: u32, color: u32);
-    pub fn gop_get_pixel(x: u32, y: u32) -> u32;
-    pub fn gop_get_fb() -> *mut FbInfo;
-    pub fn gop_nv_init() -> i32;
-    pub fn term_init();
-    pub fn term_clear(bg: u32);
-    pub fn term_write(s: *const u8);
-    pub fn term_writeln(s: *const u8);
-    pub fn term_set_fg(c: u32);
-    pub fn term_set_bg(c: u32);
-    pub fn kbd_init(st: *mut EfiSystemTable);
-    pub fn kbd_switch_to_ps2();
-    pub fn mouse_init(st: *mut EfiSystemTable);
-    pub fn mouse_reinit_ps2();
-    pub fn mouse_cleanup_uefi();
-    pub fn fat_init() -> i32;
-    pub fn fat_set_bs(bs: *mut EfiBootServices, img: efi_handle, st: *mut EfiSystemTable);
-    pub fn fat_set_device(handle: efi_handle) -> i32;
-    pub fn fat_exists(path: *const u8) -> i32;
-    pub fn fat_read_file(path: *const u8, buf: *mut c_void, max: u32) -> i32;
-    pub fn fat_write_file(path: *const u8, data: *const c_void, size: u32) -> i32;
-    pub fn fat_format(total_sectors: u64) -> i32;
-    pub fn fat_mkdir(path: *const u8) -> i32;
-    pub fn fat_install_bootloader() -> i32;
-    pub fn fat_get_file_size(path: *const u8) -> i32;
-    pub fn fat_use_ahci() -> i32;
-    pub fn fat_set_drive(r: usize, w: usize, priv_: *mut c_void) -> i32;
-    pub fn fat_reinit() -> i32;
-    pub fn mm_init(bs: *mut EfiBootServices, img: efi_handle);
-    pub fn ahci_init();
-    pub fn ahci_is_ready() -> i32;
-    pub fn pit_init(freq: u32);
-    pub fn pit_stall(us: u32);
-    pub fn pit_get_ticks() -> u64;
-    pub fn pcspkr_init();
-    pub fn shell_run();
-    pub fn exit_boot_services();
-    pub fn lumie_efi_register_boot_entry() -> i32;
-    pub fn lumie_load_shell_module() -> i32;
-    pub fn lumie_cache_kernel_image(base: *const c_void, size: u32);
-    pub fn lumie_sched_init();
-    pub fn ramdisk_init();
-    pub fn ramdisk_format_fat32();
-    pub fn ramdisk_read_sector_cb(lba: u32, count: u32, buf: *mut c_void) -> i32;
-    pub fn ramdisk_write_sector_cb(lba: u32, count: u32, buf: *mut c_void) -> i32;
-    pub fn setup_gui_select_disk() -> i32;
-    pub fn disk_get_info(index: i32) -> *const c_void;
-    pub fn install_pkg_open(path: *const u8, pkg: *mut c_void) -> i32;
-    pub fn install_pkg_extract_all(pkg: *mut c_void, progress: *mut c_void) -> i32;
-    pub fn install_pkg_close(pkg: *mut c_void);
-    pub fn ps2mouse_init();
-    pub fn ps2mouse_is_ready() -> i32;
-    pub fn ps2mouse_poll(dx: *mut i32, dy: *mut i32, btns: *mut u8) -> i32;
-    pub fn xhci_init();
-    pub fn xhci_mouse_present() -> i32;
-    pub fn xhci_poll_mouse(dx: *mut i32, dy: *mut i32, btns: *mut u8) -> i32;
-    pub fn drvcheck_run_scan();
-    pub fn bootcache_save(key: *const u8);
-    pub fn sys_load(path: *const u8, boot_info: *mut SysBootInfo, mod_out: *mut SysModule) -> i32;
-    pub fn desktop_init();
-    pub fn desktop_run();
-    pub fn sched_init();
-    static mut g_nv_gpu_api: *mut c_void;
-}
-
 /* Boot device handle (saved during loader init) */
 static mut G_LOADER_BOOT_DEVICE: efi_handle = core::ptr::null_mut();
 
@@ -144,7 +74,7 @@ pub fn get_boot_device() -> efi_handle {
 /* ------------------------------------------------------------------ */
 
 #[no_mangle]
-pub extern "C" fn lumie_loader_start(
+pub extern "efiapi" fn lumie_loader_start(
     image_handle: efi_handle,
     system_table: *mut EfiSystemTable,
 ) {
@@ -207,8 +137,8 @@ pub extern "C" fn lumie_loader_start(
         if !bs.is_null() {
             if let Some(hp) = (*bs).handle_protocol {
                 let mut li: *mut core::ffi::c_void = ptr::null_mut();
-                let st = hp(image_handle, li_guid, &mut li);
-                if st == 0 && !li.is_null() {
+                let err = hp(image_handle, li_guid, &mut li);
+                if err == 0 && !li.is_null() {
                     let li_bytes = li as *mut u8;
                     let dh_ptr = li_bytes.add(24) as *mut efi_handle;
                     G_LOADER_BOOT_DEVICE = *dh_ptr;
@@ -224,8 +154,8 @@ pub extern "C" fn lumie_loader_start(
         if !st.boot_services.is_null() {
             if let Some(hp) = (*st.boot_services).handle_protocol {
                 let mut li: *mut core::ffi::c_void = ptr::null_mut();
-                let st = hp(image_handle, li_guid, &mut li);
-                if st == 0 && !li.is_null() {
+                let err2 = hp(image_handle, li_guid, &mut li);
+                if err2 == 0 && !li.is_null() {
                     let li_bytes = li as *mut u8;
                     let base_ptr = li_bytes.add(40) as *mut *const c_void;  // image_base
                     let size_ptr = li_bytes.add(48) as *mut u64;            // image_size
@@ -251,16 +181,15 @@ pub extern "C" fn lumie_loader_start(
     /* Not installed → shell */
     if !boot::lumieos_installed() {
         /* Pre-load install.pkg into RAM disk */
-        if !G_LOADER_BOOT_DEVICE.is_null() {
-            unsafe {
+        unsafe { if !G_LOADER_BOOT_DEVICE.is_null() {
                 fat_set_device(G_LOADER_BOOT_DEVICE);
                 let pkg_size = fat_get_file_size(b"install.pkg\0" as *const u8);
                 if pkg_size > 0 {
                     let sz = pkg_size as u32;
                     let mut buf: *mut u8 = ptr::null_mut();
                     if let Some(ap) = (*st.boot_services).allocate_pool {
-                        let st = ap(EFI_BOOT_SERVICES_DATA, sz as u64, &mut buf as *mut *mut u8 as *mut *mut c_void);
-                        if st == 0 && !buf.is_null() {
+                        let err3 = ap(EFI_BOOT_SERVICES_DATA, sz as u64, &mut buf as *mut *mut u8 as *mut *mut c_void);
+                        if err3 == 0 && !buf.is_null() {
                             let r = fat_read_file(
                                 b"install.pkg\0" as *const u8, buf as *mut c_void, sz,
                             );
@@ -268,8 +197,8 @@ pub extern "C" fn lumie_loader_start(
                                 ramdisk_init();
                                 ramdisk_format_fat32();
                                 fat_set_drive(
-                                    ramdisk_read_sector_cb as usize,
-                                    ramdisk_write_sector_cb as usize,
+                                    ramdisk_read_sector_cb as *const () as usize,
+                                    ramdisk_write_sector_cb as *const () as usize,
                                     ptr::null_mut(),
                                 );
                                 fat_reinit();
@@ -286,24 +215,36 @@ pub extern "C" fn lumie_loader_start(
             }
         }
 
-        let target = unsafe { setup_gui_select_disk() };
-        if target >= 0 {
-            let d = unsafe { disk_get_info(target) };
-            if !d.is_null() {
-                unsafe {
-                    fat_write_file(
-                        b"/system/target.cfg\0" as *const u8, d as *const c_void, 1,
-                    );
-                }
+        let mut devices: [devices::LoaderBlockDevice; 16] = unsafe { core::mem::zeroed() };
+        let dev_count = devices::loader_enum_block_devices(unsafe { &*st.boot_services }, &mut devices);
+        let target = if dev_count > 0 {
+            let sel = devices::loader_show_device_menu(&devices[..dev_count as usize]);
+            if sel >= 0 {
+                let d = &devices[sel as usize];
+                let mut cfg: [u8; 512] = [0u8; 512];
+                let mut pos = 0;
+                let prefix = b"blkio\n";
+                for &c in prefix { if pos < 511 { cfg[pos] = c; pos += 1; } }
+                let mut sb: [u8; 32] = [0u8; 32];
+                unsafe { lumie_std::format::lumie_itoa(d.block_count as i64, sb.as_mut_ptr(), 10); }
+                for &c in sb.iter() { if c == 0 { break; } if pos < 511 { cfg[pos] = c; pos += 1; } }
+                if pos < 511 { cfg[pos] = b'\n'; pos += 1; }
+                for &c in d.label.iter() { if c == 0 { break; } if pos < 511 { cfg[pos] = c; pos += 1; } }
+                unsafe { fat_write_file(b"/system/target.cfg\0" as *const u8, cfg.as_ptr() as *const c_void, pos as u32); }
+                sel
+            } else { -1 }
+        } else { -1 };
+        if target < 0 {
+            unsafe {
+                exit_boot_services();
+                lumie_sched_init();
+                gop_nv_init();
+                shell_run();
             }
+            return;
         }
 
-        unsafe {
-            exit_boot_services();
-            lumie_sched_init();
-            gop_nv_init();
-            shell_run();
-        }
+        crate::install::loader_install_screen();
         return;
     }
 
@@ -349,11 +290,12 @@ pub extern "C" fn lumie_loader_start(
             if fat_exists(b"/drivers\0" as *const u8) == 0 { fat_mkdir(b"/drivers\0" as *const u8); }
             let mut rpkg: [u8; 256] = [0u8; 256];
             if install_pkg_open(
-                b"install.pkg\0" as *const u8, rpkg.as_mut_ptr() as *mut c_void,
-            ) == 0 {
-                install_pkg_extract_all(rpkg.as_mut_ptr() as *mut c_void, ptr::null_mut());
-                install_pkg_close(rpkg.as_mut_ptr() as *mut c_void);
-            }
+                    b"install.pkg\0" as *const u8, rpkg.as_mut_ptr() as *mut c_void,
+                ) == 0 {
+                    install_pkg_set_write_fn(Some(fat_write_file));
+                    install_pkg_extract_all(rpkg.as_mut_ptr() as *mut c_void, ptr::null_mut());
+                    install_pkg_close(rpkg.as_mut_ptr() as *mut c_void);
+                }
             gop_draw_string(
                 w / 2 - 8 * 8, h / 3 + 24, green, bg,
                 b"Repair complete. Booting...\0" as *const u8,
@@ -385,7 +327,7 @@ pub extern "C" fn lumie_loader_start(
                 ) == 0 && !mod_.entry.is_null()
                 {
                     let mut api: *mut c_void = ptr::null_mut();
-                    let entry_fn: extern "C" fn(*mut SysBootInfo, *mut *mut c_void) -> i32 =
+                    let entry_fn: fn(*mut SysBootInfo, *mut *mut c_void) -> i32 =
                         core::mem::transmute(mod_.entry);
                     let ret = entry_fn(&mut boot_info, &mut api);
                     if ret == 0 && !api.is_null() {
@@ -398,3 +340,5 @@ pub extern "C" fn lumie_loader_start(
 
     unsafe { gop_nv_init(); desktop_init(); desktop_run(); }
 }
+
+

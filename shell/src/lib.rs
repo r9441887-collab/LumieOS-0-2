@@ -7,10 +7,7 @@ mod commands;
 mod login;
 mod prompt;
 
-use core::fmt::{self, Write};
-
 extern crate lumie_std;
-use lumie_std::*;
 
 pub struct LumieDirEnt {
     pub name: [u8; 256],
@@ -350,7 +347,7 @@ impl<'a> Shell<'a> {
 
         self.svc.reg_init();
 
-        let mut line_buf = [0u8; 4096];
+        let mut _line_buf = [0u8; 4096];
         let mut show_prompt = true;
 
         {
@@ -443,7 +440,7 @@ impl<'a> Shell<'a> {
         }
         self.svc.term_writeln("");
 
-        'main: loop {
+        loop {
             let mut ms = MouseState::default();
             if self.svc.mouse_poll(&mut ms) {
                 if self.mouse_visible {
@@ -465,7 +462,7 @@ impl<'a> Shell<'a> {
             show_prompt = true;
 
             let mut line_pos: usize = 0;
-            line_buf = [0u8; 4096];
+            _line_buf = [0u8; 4096];
 
             loop {
                 let c = self.svc.kbd_getchar();
@@ -484,13 +481,13 @@ impl<'a> Shell<'a> {
                 }
                 if c == 0x1B {
                     line_pos = 0;
-                    line_buf = [0u8; 4096];
+                    _line_buf = [0u8; 4096];
                     self.svc.term_writeln("^C");
                     show_prompt = true;
                     break;
                 }
                 if c >= b' ' as i32 && c <= b'~' as i32 && line_pos < 4095 {
-                    line_buf[line_pos] = c as u8;
+                    _line_buf[line_pos] = c as u8;
                     line_pos += 1;
                     self.svc.term_putchar(c as u8);
                 }
@@ -500,12 +497,28 @@ impl<'a> Shell<'a> {
                 continue;
             }
 
-            let argv = parser::shell_parse(&mut line_buf[..line_pos + 1]);
-            if argv.is_empty() {
+            let pr = parser::shell_parse(&mut _line_buf[..line_pos + 1]);
+            if pr.argc == 0 {
                 continue;
             }
 
-            let cmd0 = argv[0];
+            fn arg_slice<'a>(buf: &'a [u8], start: usize, len: usize) -> &'a [u8] {
+                if len == 0 { return b""; }
+                &buf[start..start + len]
+            }
+            let cmd0 = arg_slice(&_line_buf, pr.argv_start[0], pr.argv_len[0]);
+
+            macro_rules! arg {
+                ($i:expr) => {{
+                    let i = $i;
+                    if i < pr.argc { Some(arg_slice(&_line_buf, pr.argv_start[i], pr.argv_len[i])) } else { None }
+                }}
+            }
+            macro_rules! arg_str {
+                ($i:expr) => {{
+                    arg!($i).map(|a| core::str::from_utf8(a).unwrap_or(""))
+                }}
+            }
 
             if cmd0.len() == 2 && cmd0[1] == b':' {
                 let letter = if cmd0[0] >= b'a' && cmd0[0] <= b'z' {
@@ -528,18 +541,18 @@ impl<'a> Shell<'a> {
             match cmd0 {
                 b"help" | b"?" => builtins::cmd_help(self),
                 b"clear" | b"cls" => builtins::cmd_clear(self),
-                b"ls" | b"dir" => filesystem::cmd_ls(self, argv.get(1).copied()),
-                b"cd" => filesystem::cmd_cd(self, argv.get(1).copied()),
+                b"ls" | b"dir" => filesystem::cmd_ls(self, arg!(1)),
+                b"cd" => filesystem::cmd_cd(self, arg!(1)),
                 b"pwd" => builtins::cmd_pwd(self),
-                b"cat" | b"type" => filesystem::cmd_cat(self, argv.get(1).copied()),
-                b"rm" | b"del" => filesystem::cmd_rm(self, argv.get(1).copied()),
-                b"rmdir" => filesystem::cmd_rmdir(self, argv.get(1).copied()),
-                b"mkdir" => filesystem::cmd_mkdir(self, argv.get(1).copied()),
-                b"echo" => builtins::cmd_echo(self, argv.get(1).copied()),
+                b"cat" | b"type" => filesystem::cmd_cat(self, arg!(1)),
+                b"rm" | b"del" => filesystem::cmd_rm(self, arg!(1)),
+                b"rmdir" => filesystem::cmd_rmdir(self, arg!(1)),
+                b"mkdir" => filesystem::cmd_mkdir(self, arg!(1)),
+                b"echo" => builtins::cmd_echo(self, arg!(1)),
                 b"info" => builtins::cmd_info(self),
                 b"ver" => builtins::cmd_ver(self),
                 b"time" => builtins::cmd_time(self),
-                b"timezone" => builtins::cmd_timezone(self, argv.get(1).copied()),
+                b"timezone" => builtins::cmd_timezone(self, arg!(1)),
                 b"reboot" => {
                     if self.confirm_action("Reboot system?") {
                         self.svc.reboot();
@@ -552,18 +565,18 @@ impl<'a> Shell<'a> {
                 }
                 b"whoami" => builtins::cmd_whoami(self),
                 b"su" | b"login" => builtins::cmd_su(self),
-                b"adduser" => builtins::cmd_adduser(self, argv.get(1).copied(), argv.get(2).copied()),
-                b"passwd" => builtins::cmd_passwd(self, argv.get(1).copied()),
+                b"adduser" => builtins::cmd_adduser(self, arg!(1), arg!(2)),
+                b"passwd" => builtins::cmd_passwd(self, arg!(1)),
                 b"regedit" => builtins::cmd_regedit(self),
                 b"notepad" => builtins::cmd_notepad(self),
                 b"disks" => builtins::cmd_disks(self),
                 b"ps" => builtins::cmd_ps(self),
                 b"beep" => builtins::cmd_beep(
                     self,
-                    argv.get(1).map(|a| parse_int(core::str::from_utf8(a).unwrap_or("440")).unwrap_or(440)).unwrap_or(440),
-                    argv.get(2).map(|a| parse_int(core::str::from_utf8(a).unwrap_or("200")).unwrap_or(200)).unwrap_or(200),
+                    arg!(1).and_then(|a| parse_int(core::str::from_utf8(a).unwrap_or("440"))).unwrap_or(440i32) as u32,
+                    arg!(2).and_then(|a| parse_int(core::str::from_utf8(a).unwrap_or("200"))).unwrap_or(200i32) as u32,
                 ),
-                b"edit" => commands::cmd_edit(self, argv.get(1).copied()),
+                b"edit" => commands::cmd_edit(self, arg!(1)),
                 b"setup" | b"install" => {
                     if self.current_drive != b'A' && self.svc.users_current_role() != crate::USER_ROLE_ADMIN {
                         self.svc.term_set_fg(12);
@@ -573,19 +586,25 @@ impl<'a> Shell<'a> {
                         self.svc.setup_gui_run();
                     }
                 }
-                b"wher" => filesystem::cmd_wher(self, argv.get(1).copied(), argv.get(2).copied()),
-                b"wher1" => filesystem::cmd_wher1(self, argv.get(1).copied()),
-                b"format" => filesystem::cmd_format(self, argv.get(1).copied()),
-                b"lumiec" => commands::cmd_lumiec(self, argv.get(1).copied(), argv.get(2).copied()),
+                b"wher" => filesystem::cmd_wher(self, arg!(1), arg!(2)),
+                b"wher1" => filesystem::cmd_wher1(self, arg!(1)),
+                b"format" => filesystem::cmd_format(self, arg!(1)),
+                b"lumiec" => commands::cmd_lumiec(self, arg!(1), arg!(2)),
                 b"drvcheck" => self.svc.drvcheck_run_scan(),
-                b"bootcache" => commands::cmd_bootcache(self, &argv),
-                b"sysload" => commands::cmd_sysload(self, argv.get(1).copied()),
+                b"bootcache" => {
+                    let mut arg_slices: [&[u8]; parser::MAX_ARGS] = [b""; parser::MAX_ARGS];
+                    for i in 0..pr.argc {
+                        arg_slices[i] = arg_slice(&_line_buf, pr.argv_start[i], pr.argv_len[i]);
+                    }
+                    commands::cmd_bootcache(self, &arg_slices[..pr.argc]);
+                }
+                b"sysload" => commands::cmd_sysload(self, arg!(1)),
                 b"desktop" => {
                     self.svc.desktop_init();
                     self.svc.desktop_run();
                 }
                 b"extract" => {
-                    self.svc.extract_gzip_tar(argv.get(1).map(|a| core::str::from_utf8(a).unwrap_or("")));
+                    self.svc.extract_gzip_tar(arg_str!(1));
                 }
                 b"renet" => {
                     if self.svc.net_init() != 0 {
@@ -593,7 +612,7 @@ impl<'a> Shell<'a> {
                         self.svc.term_writeln("Network not available");
                         self.svc.term_set_fg(15);
                     } else {
-                        self.svc.net_renet_download(argv.get(1).map(|a| core::str::from_utf8(a).unwrap_or("")));
+                        self.svc.net_renet_download(arg_str!(1));
                     }
                 }
                 _ => {
@@ -668,13 +687,24 @@ fn parse_int(s: &str) -> Option<i32> {
     }
 }
 
-#[derive(Default)]
 pub struct MouseState {
     pub x: i32,
     pub y: i32,
     pub dx: i32,
     pub dy: i32,
     pub buttons: u8,
+}
+
+impl Default for MouseState {
+    fn default() -> Self {
+        MouseState {
+            x: 0,
+            y: 0,
+            dx: 0,
+            dy: 0,
+            buttons: 0,
+        }
+    }
 }
 
 pub struct FramebufferInfo {
@@ -685,13 +715,24 @@ pub struct FramebufferInfo {
     pub size: u32,
 }
 
-#[derive(Default)]
 pub struct DiskInfo {
     pub name: [u8; 64],
     pub sector_count: u64,
     pub sector_size: u32,
     pub present: bool,
     pub is_ahci: bool,
+}
+
+impl Default for DiskInfo {
+    fn default() -> Self {
+        DiskInfo {
+            name: [0u8; 64],
+            sector_count: 0,
+            sector_size: 0,
+            present: false,
+            is_ahci: false,
+        }
+    }
 }
 
 pub struct SysBootInfo {
@@ -704,7 +745,7 @@ pub struct SysBootInfo {
 
 #[derive(Default)]
 pub struct SysModule {
-    pub entry: Option<extern "C" fn(&SysBootInfo, &mut *mut u8) -> i32>,
+    pub entry: Option<fn(&SysBootInfo, &mut *mut u8) -> i32>,
     pub base: u64,
     pub size: u32,
 }
@@ -717,3 +758,8 @@ pub struct LcCtx {
 
 pub const USER_ROLE_USER: i32 = 0;
 pub const USER_ROLE_ADMIN: i32 = 1;
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
+}

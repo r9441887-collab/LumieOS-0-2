@@ -89,7 +89,7 @@ pub fn do_login(sh: &mut Shell) {
                 if c == b'\x08' as i32 {
                     if p > 0 {
                         p -= 1;
-                        sh.svc.term_write("\b \b");
+                        sh.svc.term_write("\x08 \x08");
                     }
                 } else if c >= b' ' as i32 && c <= b'~' as i32 && p < 63 {
                     login_name[p] = c as u8;

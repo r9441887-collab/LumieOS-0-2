@@ -5,7 +5,11 @@ edition = "2021"
 
 [dependencies]
 lumie_std = { path = "../libs/lumie_std" }
-lumieos_kernel = { path = "../kernel" }
 
 [lib]
-crate-type = ["staticlib", "lib"]
+name = "lumieos_loader"
+crate-type = ["lib"]
+
+[[bin]]
+name = "lumieos-loader"
+path = "src/main.rs"

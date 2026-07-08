@@ -231,12 +231,14 @@ pub fn cmd_timezone(sh: &Shell, arg: Option<&[u8]>) {
     }
 }
 
+#[allow(dead_code)]
 pub fn cmd_reboot(sh: &Shell) {
     if sh.confirm_action("Reboot system?") {
         sh.svc.reboot();
     }
 }
 
+#[allow(dead_code)]
 pub fn cmd_shutdown(sh: &Shell) {
     if sh.confirm_action("Shutdown system?") {
         sh.svc.shutdown();
@@ -263,7 +265,7 @@ pub fn cmd_ps(sh: &Shell) {
         for &b in b" " {
             if pos < 63 { line[pos] = b; pos += 1; }
         }
-        for &b in id_s.as_bytes() {
+        for &b in id_s.iter() {
             if pos < 63 { line[pos] = b; pos += 1; }
         }
         for &b in b"     " {
@@ -282,11 +284,11 @@ pub fn cmd_ps(sh: &Shell) {
             for &b in b"SYS " { if pos < 63 { line[pos] = b; pos += 1; } }
         }
         for &b in b"  " { if pos < 63 { line[pos] = b; pos += 1; } }
-        let state_str = match st {
+        let state_str: &[u8] = match st {
             0 => b"RUNNING",
-            1 => b"READY",
+            1 => b"READY  ",
             2 => b"BLOCKED",
-            _ => b"DEAD",
+            _ => b"DEAD   ",
         };
         for &b in state_str {
             if pos < 63 { line[pos] = b; pos += 1; }
@@ -333,7 +335,7 @@ pub fn cmd_su(sh: &Shell) {
         if c == b'\x08' as i32 {
             if p > 0 {
                 p -= 1;
-                sh.svc.term_write("\b \b");
+                sh.svc.term_write("\x08 \x08");
             }
         } else if c >= b' ' as i32 && c <= b'~' as i32 && p < 63 {
             name[p] = c as u8;
@@ -432,7 +434,7 @@ pub fn cmd_regedit(sh: &Shell) {
     sh.svc.term_set_bg(bg as u32);
     sh.svc.term_set_fg(15);
 
-    let mut line = [0u8; 128];
+    let mut _line = [0u8; 128];
     loop {
         sh.svc.term_set_pos(0, 0);
         sh.svc.term_set_fg(11);
@@ -465,7 +467,7 @@ pub fn cmd_regedit(sh: &Shell) {
         sh.svc.term_write("> ");
 
         let mut p = 0;
-        line = [0u8; 128];
+        _line = [0u8; 128];
         loop {
             let c = sh.svc.kbd_getchar();
             if c == b'\n' as i32 {
@@ -474,17 +476,17 @@ pub fn cmd_regedit(sh: &Shell) {
             if c == b'\x08' as i32 {
                 if p > 0 {
                     p -= 1;
-                    sh.svc.term_write("\b \b");
+                    sh.svc.term_write("\x08 \x08");
                 }
             } else if c >= b' ' as i32 && c <= b'~' as i32 && p < 127 {
-                line[p] = c as u8;
+                _line[p] = c as u8;
                 p += 1;
                 sh.svc.term_putchar(c as u8);
             }
         }
         sh.svc.term_writeln("");
 
-        let cmd = core::str::from_utf8(&line[..p]).unwrap_or("").trim_end_matches('\0');
+        let cmd = core::str::from_utf8(&_line[..p]).unwrap_or("").trim_end_matches('\0');
         match cmd {
             "quit" | "exit" => break,
             "list" => continue,
@@ -565,7 +567,7 @@ pub fn cmd_notepad(sh: &Shell) {
         if c == b'\x08' as i32 {
             if pos > 0 {
                 pos -= 1;
-                sh.svc.term_write("\b \b");
+                sh.svc.term_write("\x08 \x08");
             }
             continue;
         }

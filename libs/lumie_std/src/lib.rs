@@ -6,6 +6,7 @@ pub mod string;
 pub mod format;
 pub mod math;
 pub mod pe;
+pub mod fs;
 
 pub use types::*;
 pub use color::*;

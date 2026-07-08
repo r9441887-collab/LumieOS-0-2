@@ -1,9 +1,9 @@
-#![no_std]
 
 use core::ffi::c_void;
 use core::ptr;
 use crate::uefi::*;
 use crate::display;
+use crate::ffi::*;
 
 static mut LD_ST: *mut EfiSystemTable = ptr::null_mut();
 static mut LD_CON_IN: *mut core::ffi::c_void = ptr::null_mut();
@@ -46,16 +46,6 @@ struct EfiSimplePointerProtocol {
     get_state: EfiPointerGetState,
     wait_for_input: *mut core::ffi::c_void,
     mode: *mut core::ffi::c_void,
-}
-
-extern "C" {
-    fn ps2mouse_init();
-    fn ps2mouse_is_ready() -> i32;
-    fn ps2mouse_poll(dx: *mut i32, dy: *mut i32, btns: *mut u8) -> i32;
-    fn xhci_init();
-    fn xhci_mouse_present() -> i32;
-    fn xhci_poll_mouse(dx: *mut i32, dy: *mut i32, btns: *mut u8) -> i32;
-    fn pit_stall(us: u32);
 }
 
 pub fn loader_kbd_init(st: *mut EfiSystemTable) {
@@ -149,7 +139,7 @@ pub fn loader_mouse_init(st: *mut EfiSystemTable) {
                     let abs_reset: EfiInputReset = core::mem::transmute(
                         (*(abs_ptr as *mut core::ffi::c_void as *mut [*mut c_void; 3]))[0]
                     );
-                    abs_reset(abs_ptr, 0);
+                    if let Some(f) = abs_reset { f(abs_ptr, 0); }
                 }
                 LD_POINTER = ptr::null_mut();
             }
@@ -161,7 +151,7 @@ pub fn loader_mouse_init(st: *mut EfiSystemTable) {
             let reset: EfiInputReset = core::mem::transmute(
                 (*(LD_POINTER as *mut [*mut c_void; 3]))[0]
             );
-            reset(LD_POINTER, 0);
+            if let Some(f) = reset { f(LD_POINTER, 0); }
         } else {
             ps2mouse_init();
             if ps2mouse_is_ready() == 0 {
@@ -189,7 +179,7 @@ pub fn loader_mouse_poll(dx: &mut i32, dy: &mut i32, buttons: &mut u8) -> bool {
         let get_state: EfiPointerGetState = core::mem::transmute(
             (*(LD_POINTER as *mut [*mut c_void; 3]))[1]
         );
-        let st = get_state(LD_POINTER, &mut ps);
+        let st = if let Some(f) = get_state { f(LD_POINTER, &mut ps) } else { 1u64 };
         if st != 0 { return false; }
         if ps.relative_movement_x == 0 && ps.relative_movement_y == 0 && ps.buttons == 0 {
             return false;

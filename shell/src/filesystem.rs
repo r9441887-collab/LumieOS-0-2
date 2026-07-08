@@ -1,19 +1,25 @@
 use crate::{Shell, LumieDirEnt, builtins::write_int};
 
+fn str_to_fixed<'a>(s: &str, buf: &'a mut [u8]) -> &'a str {
+    let bytes = s.as_bytes();
+    let len = bytes.len().min(buf.len() - 1);
+    buf[..len].copy_from_slice(&bytes[..len]);
+    buf[len] = 0;
+    core::str::from_utf8(&buf[..len]).unwrap_or("")
+}
+
 pub fn cmd_ls(sh: &Shell, path: Option<&[u8]>) {
-    let mut entries = [LumieDirEnt {
-        name: [0u8; 256],
-        is_dir: false,
-        size: 0,
-    }; 256];
+    let _entries_buf = [[0u8; 256]; 256];
+    let mut entries: [LumieDirEnt; 256] = unsafe { core::mem::zeroed() };
     let mut resolved = [0u8; 256];
+    let mut dir_buf = [0u8; 256];
     let dir = match path {
         Some(p) => {
             let p_str = core::str::from_utf8(p).unwrap_or("");
             sh.resolve_path(p_str, &mut resolved);
-            core::str::from_utf8(&resolved).unwrap_or("").trim_end_matches('\0').to_owned()
+            str_to_fixed(core::str::from_utf8(&resolved).unwrap_or("").trim_end_matches('\0'), &mut dir_buf)
         }
-        None => sh.cwd_str().to_owned(),
+        None => str_to_fixed(sh.cwd_str(), &mut dir_buf),
     };
     let count = sh.svc.fs_list_dir(&dir, &mut entries);
     if count < 0 {
@@ -101,11 +107,7 @@ pub fn cmd_cd(sh: &mut Shell, path: Option<&[u8]>) {
                 return;
             }
 
-            let mut check = [LumieDirEnt {
-                name: [0u8; 256],
-                is_dir: false,
-                size: 0,
-            }; 1];
+            let mut check: [LumieDirEnt; 1] = unsafe { core::mem::zeroed() };
             if sh.svc.fs_list_dir(clean, &mut check) < 0 {
                 sh.svc.term_set_fg(12);
                 sh.svc.term_write("cd: not a directory: ");
@@ -199,8 +201,8 @@ pub fn cmd_cat(sh: &Shell, file: Option<&[u8]>) {
         return;
     }
 
-    let alloc_sz = if size < 4096 { 4096 } else { (size + 1) as usize };
-    let mut buf = vec![0u8; alloc_sz];
+    let _alloc_sz = if size < 4096 { 4096 } else { (size + 1) as usize };
+    let mut buf = [0u8; 64 * 1024 + 1];
     let read = sh.svc.fs_read_file(resolved_str, &mut buf);
     if read < 0 {
         sh.svc.term_set_fg(12);
@@ -212,7 +214,7 @@ pub fn cmd_cat(sh: &Shell, file: Option<&[u8]>) {
     let data = &buf[..read as usize];
     if let Some(pt) = sh.svc.pe_type(data) {
         let arch = sh.svc.pe_machine_str(data);
-        let mut sect_str = [0u8; 16];
+        let _sect_str = [0u8; 16];
         // We can't easily access nt->n_sections from the trait, skip section count
         sh.svc.term_set_fg(11);
         sh.svc.term_write("PE ");
@@ -364,11 +366,7 @@ pub fn cmd_wher(sh: &Shell, dir: Option<&[u8]>, pattern: Option<&[u8]>) {
         let cur_len = stack_mem[sp].iter().position(|&c| c == 0).unwrap_or(WHER_PATH_MAX);
         let cur = core::str::from_utf8(&stack_mem[sp][..cur_len]).unwrap_or("/");
 
-        let mut entries = [LumieDirEnt {
-            name: [0u8; 256],
-            is_dir: false,
-            size: 0,
-        }; 128];
+        let mut entries: [LumieDirEnt; 128] = unsafe { core::mem::zeroed() };
         let count = sh.svc.fs_list_dir(cur, &mut entries);
         if count < 0 {
             continue;

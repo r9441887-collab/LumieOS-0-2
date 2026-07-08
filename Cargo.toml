@@ -6,8 +6,12 @@ members = [
     "editor",
     "desktop",
     "libs/lumie_std",
+    "libs/lumie_math",
 ]
 resolver = "2"
+
+[profile.dev]
+panic = "abort"
 
 [profile.release]
 lto = true

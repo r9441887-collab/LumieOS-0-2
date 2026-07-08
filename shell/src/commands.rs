@@ -17,6 +17,7 @@ pub fn cmd_edit(sh: &Shell, file: Option<&[u8]>) {
     }
 }
 
+#[allow(dead_code)]
 pub fn cmd_setup(sh: &Shell) {
     if sh.lumieos_installed() {
         if !sh.confirm_action("LumieOS is already installed. Reinstall?") {
@@ -76,8 +77,11 @@ pub fn cmd_setup(sh: &Shell) {
     sh.svc.term_set_fg(15);
 }
 
+#[allow(dead_code)]
 const LUMIE_MAGIC_LKRN: u32 = 0x4E524B4C;
+#[allow(dead_code)]
 const LUMIE_MAGIC_LSH: u32 = 0x484C534C;
+#[allow(dead_code)]
 const LUMIE_MAGIC_LDRV: u32 = 0x5652444C;
 
 pub fn cmd_lumiec(sh: &Shell, src_path: Option<&[u8]>, out_path_arg: Option<&[u8]>) {
@@ -116,7 +120,7 @@ pub fn cmd_lumiec(sh: &Shell, src_path: Option<&[u8]>, out_path_arg: Option<&[u8
         }
     }
 
-    let mut ctx = LcCtx::new();
+    let mut ctx = LcCtx::default();
 
     sh.svc.term_set_fg(11);
     sh.svc.term_write("LumieC: compiling ");
@@ -185,6 +189,7 @@ pub fn cmd_lumiec(sh: &Shell, src_path: Option<&[u8]>, out_path_arg: Option<&[u8
     sh.svc.term_set_fg(15);
 }
 
+#[allow(dead_code)]
 pub fn cmd_drvcheck(sh: &Shell) {
     sh.svc.drvcheck_run_scan();
 }
@@ -226,7 +231,7 @@ pub fn cmd_sysload(sh: &Shell, path: Option<&[u8]>) {
             let resolved_str = core::str::from_utf8(&resolved).unwrap_or("").trim_end_matches('\0');
 
             let fb = sh.svc.gop_get_fb();
-            let mut bi = crate::SysBootInfo {
+            let bi = crate::SysBootInfo {
                 version: 1,
                 gop_fb_base: fb.base,
                 gop_width: fb.width,
@@ -252,15 +257,18 @@ pub fn cmd_sysload(sh: &Shell, path: Option<&[u8]>) {
     sh.svc.term_set_fg(15);
 }
 
+#[allow(dead_code)]
 pub fn cmd_desktop(sh: &Shell) {
     sh.svc.desktop_init();
     sh.svc.desktop_run();
 }
 
+#[allow(dead_code)]
 pub fn cmd_extract(sh: &Shell, file: Option<&[u8]>) {
     sh.svc.extract_gzip_tar(file.map(|f| core::str::from_utf8(f).unwrap_or("")));
 }
 
+#[allow(dead_code)]
 pub fn cmd_renet(sh: &Shell, name: Option<&[u8]>) {
     if sh.svc.net_init() != 0 {
         sh.svc.term_set_fg(12);
