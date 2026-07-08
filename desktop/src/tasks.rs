@@ -46,12 +46,12 @@ pub fn switch_to_task(tasks: &mut [Task], windows: &mut [Window], idx: usize) {
         return;
     }
     if task.window_idx >= 0 && (task.window_idx as usize) < windows.len() {
-        let win = &mut windows[task.window_idx as usize];
-        if win.open {
+        let win_idx = task.window_idx as usize;
+        if windows[win_idx].open {
             for w in windows.iter_mut() {
                 w.active = false;
             }
-            win.active = true;
+            windows[win_idx].active = true;
         }
     }
 }

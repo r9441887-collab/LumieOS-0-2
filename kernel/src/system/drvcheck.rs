@@ -172,7 +172,7 @@ pub unsafe fn drvcheck_scan_file(fat_path: *const u8, rep: *mut DrvCheckReport) 
     let path_ptr = path_str.as_ptr() as *const u8;
     let fsz = fs::get_file_size(path_ptr);
     if fsz > 0 {
-        let mut buf = crate::mm::alloc(fsz as u64);
+        let buf = crate::mm::alloc(fsz as u64);
         if !buf.is_null() {
             let rd = fs::read_file(path_ptr, buf, fsz as u32);
             if rd > 0 {
@@ -222,7 +222,7 @@ pub unsafe fn drvcheck_scan_drivers(reports: *mut DrvCheckReport, max_reports: i
             is_dir: 0,
             size: 0,
         }; 256];
-        let n = fs::list_dir(dir, entries.as_mut_ptr() as *mut core::ffi::c_void, 256);
+        let n = fs::list_dir(dir, entries.as_mut_ptr(), 256);
         if n < 0 {
             continue;
         }

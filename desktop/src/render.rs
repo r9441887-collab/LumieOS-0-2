@@ -108,21 +108,22 @@ pub unsafe fn draw_char(fb: *mut u32, pitch_px: u32, x: u32, y: u32, fg: u32, bg
         return;
     }
     let idx = (c - 32) as usize;
-    for row in 0..16 {
+    for row in 0usize..16 {
         let bits = FONT_8X16[idx][row];
-        let line = fb.offset((y + row) as u64 * pitch_px as u64 + x as u64);
+        let offset = ((y as u64 + row as u64) * pitch_px as u64 + x as u64) as usize;
+        let line = fb.add(offset);
         if bits == 0xFF {
             for col in 0..8 {
-                ptr::write_volatile(line.offset(col as isize), fg);
+                ptr::write_volatile(line.add(col), fg);
             }
         } else if bits == 0x00 {
             for col in 0..8 {
-                ptr::write_volatile(line.offset(col as isize), bg);
+                ptr::write_volatile(line.add(col), bg);
             }
         } else {
             for col in 0..8 {
                 let color = if bits & (0x80 >> col) != 0 { fg } else { bg };
-                ptr::write_volatile(line.offset(col as isize), color);
+                ptr::write_volatile(line.add(col), color);
             }
         }
     }
@@ -137,9 +138,10 @@ pub unsafe fn draw_string(fb: *mut u32, pitch_px: u32, mut x: u32, y: u32, fg: u
 
 pub unsafe fn fill_rect(fb: *mut u32, pitch_px: u32, x: u32, y: u32, w: u32, h: u32, color: u32) {
     for j in 0..h {
-        let line = fb.offset(((y + j) as u64 * pitch_px as u64 + x as u64) as isize);
+        let offset = ((y as u64 + j as u64) * pitch_px as u64 + x as u64) as usize;
+        let line = fb.add(offset);
         for i in 0..w {
-            ptr::write_volatile(line.offset(i as isize), color);
+            ptr::write_volatile(line.add(i as usize), color);
         }
     }
 }

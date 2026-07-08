@@ -1,4 +1,5 @@
 use core::arch::asm;
+use core::arch::naked_asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::arch::pic;
@@ -24,8 +25,7 @@ pub unsafe fn pit_set_sched_mode(hz: u32) {
     pic::pic_writeb(0x40, ((divisor >> 8) & 0xFF) as u8);
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn sched_tick_handler(rsp: u64) -> u64 {
+pub unsafe fn sched_tick_handler(rsp: u64) -> u64 {
     let tasks = &mut *core::ptr::addr_of_mut!(super::SCHED);
     let current_task = tasks.current_task;
     let num_tasks = tasks.num_tasks;
@@ -81,9 +81,9 @@ pub unsafe extern "C" fn sched_tick_handler(rsp: u64) -> u64 {
     tasks.tasks[next as usize].rsp
 }
 
-#[naked]
+#[unsafe(naked)]
 pub unsafe extern "C" fn pit_isr() {
-    asm!(
+    naked_asm!(
         "push rax",
         "push rcx",
         "push rdx",
@@ -121,24 +121,22 @@ pub unsafe extern "C" fn pit_isr() {
         "pop rax",
         "iretq",
         sym sched_tick_handler,
-        options(noreturn),
     );
 }
 
-#[naked]
+#[unsafe(naked)]
 pub unsafe extern "C" fn stub_isr() {
-    asm!(
+    naked_asm!(
         "push rax",
         "mov al, 0x20",
         "out 0x20, al",
         "out 0xA0, al",
         "pop rax",
         "iretq",
-        options(noreturn),
     );
 }
 
-pub extern "C" fn idle_task() {
+pub fn idle_task() {
     loop {
         unsafe { asm!("hlt"); }
     }

@@ -10,6 +10,10 @@ const KBD_END: i32 = 0xE5;
 const KBD_PGUP: i32 = 0xE6;
 const KBD_PGDN: i32 = 0xE7;
 
+const KEY_ENTER: i32 = b'\n' as i32;
+const KEY_BACKSPACE: i32 = 0x08;
+const KEY_TAB: i32 = b'\t' as i32;
+
 pub fn handle_key(ed: &mut EditorState, c: i32, services: &dyn crate::EditorServices) -> bool {
     match c {
         KBD_UP => {
@@ -83,15 +87,15 @@ pub fn handle_key(ed: &mut EditorState, c: i32, services: &dyn crate::EditorServ
             ed.pending_quit = false;
             true
         }
-        b'\n' as i32 => {
+        val if val == KEY_ENTER => {
             buffer::newline(ed);
             true
         }
-        b'\b' as i32 | 0x7F => {
+        val if val == KEY_BACKSPACE || val == 0x7F => {
             buffer::delete_char(ed);
             true
         }
-        b'\t' as i32 => {
+        val if val == KEY_TAB => {
             for _ in 0..crate::editor::TAB_STOP {
                 buffer::insert_char(ed, b' ');
             }

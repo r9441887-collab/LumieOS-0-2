@@ -5,8 +5,9 @@ edition = "2021"
 
 [dependencies]
 lumie_std = { path = "../libs/lumie_std" }
+lumie_math = { path = "../libs/lumie_math" }
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["lib", "staticlib"]
 
 [build-dependencies]

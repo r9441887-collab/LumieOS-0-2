@@ -33,10 +33,10 @@ impl PageAllocator {
 
 static mut ALLOCATOR: PageAllocator = PageAllocator::new();
 
-pub unsafe fn init(bs: *mut efi_boot_services, _image_handle: efi_handle) {
-    let get_mmap = (*bs).get_memory_map;
-    let alloc_pages = (*bs).allocate_pages;
-    let free_pages = (*bs).free_pages;
+pub unsafe fn init(bs: *mut EfiBootServices, _image_handle: efi_handle) {
+    let get_mmap = (*bs).get_memory_map.unwrap();
+    let alloc_pages = (*bs).allocate_pages.unwrap();
+    let free_pages = (*bs).free_pages.unwrap();
 
     let mut mmap_size: u64 = 0;
     let mut map_key: u64 = 0;
@@ -52,9 +52,9 @@ pub unsafe fn init(bs: *mut efi_boot_services, _image_handle: efi_handle) {
     if (st as i64) < 0 {
         return;
     }
-    let mmap_buf = mmap_addr as *mut efi_memory_descriptor;
+    let mmap_buf = mmap_addr as *mut EfiMemoryDescriptor;
 
-    let st = get_mmap(&mut mmap_size, mmap_buf as *mut c_void, &mut map_key, &mut desc_size, &mut desc_ver);
+    let st = get_mmap(&mut mmap_size, mmap_buf, &mut map_key, &mut desc_size, &mut desc_ver);
     if (st as i64) < 0 {
         free_pages(mmap_addr, pages_needed);
         return;
@@ -63,8 +63,8 @@ pub unsafe fn init(bs: *mut efi_boot_services, _image_handle: efi_handle) {
     let total_desc = mmap_size / desc_size;
     let mut avail_pages: u64 = 0;
     for i in 0..total_desc {
-        let d = (mmap_buf as u64 + i * desc_size) as *mut efi_memory_descriptor;
-        if (*d).ty == EFI_CONVENTIONAL_MEMORY && (*d).physical_start >= 0x100000 {
+        let d = (mmap_buf as u64 + i * desc_size) as *mut EfiMemoryDescriptor;
+        if (*d).type_ == EFI_CONVENTIONAL_MEMORY && (*d).physical_start >= 0x100000 {
             avail_pages += (*d).number_of_pages;
         }
     }
@@ -106,9 +106,9 @@ pub unsafe fn init(bs: *mut efi_boot_services, _image_handle: efi_handle) {
         free_pages(alloc_addr, total_needed);
         return;
     }
-    let mmap_buf = page_addr as *mut efi_memory_descriptor;
+    let mmap_buf = page_addr as *mut EfiMemoryDescriptor;
 
-    let st = get_mmap(&mut mmap_size, mmap_buf as *mut c_void, &mut map_key, &mut desc_size, &mut desc_ver);
+    let st = get_mmap(&mut mmap_size, mmap_buf, &mut map_key, &mut desc_size, &mut desc_ver);
     if (st as i64) < 0 {
         free_pages(page_addr, pages_needed);
         free_pages(alloc_addr, total_needed);
@@ -124,8 +124,8 @@ pub unsafe fn init(bs: *mut efi_boot_services, _image_handle: efi_handle) {
         if ALLOCATOR.page_stack_top >= ALLOCATOR.page_stack_capacity {
             break;
         }
-        let d = (mmap_buf as u64 + i * desc_size) as *mut efi_memory_descriptor;
-        if (*d).ty == EFI_CONVENTIONAL_MEMORY && (*d).physical_start >= 0x100000 {
+        let d = (mmap_buf as u64 + i * desc_size) as *mut EfiMemoryDescriptor;
+        if (*d).type_ == EFI_CONVENTIONAL_MEMORY && (*d).physical_start >= 0x100000 {
             let start = (*d).physical_start;
             let count = (*d).number_of_pages;
             let end = start + count * PAGE_SIZE;

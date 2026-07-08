@@ -8,6 +8,7 @@ pub const USER_ROLE_ADMIN: i32 = 1;
 pub const USER_SESSION_FILE: &[u8] = b"/system/users.cfg\0";
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct UserEntry {
     name: [u8; USER_NAME_LEN],
     pass: [u8; USER_NAME_LEN],
@@ -154,9 +155,9 @@ pub unsafe fn users_login(name: *const u8, pass: *const u8) -> i32 {
         crate::system::util::lumie_str_from_ptr(pass)
     };
     for i in 0..(G_USER_COUNT as usize) {
-        if crate::system::util::lumie_strcmp_raw(&G_USERS[i].name, name_str) == 0 {
+        if crate::system::util::lumie_strcmp_raw(&G_USERS[i].name[..], name_str.as_bytes()) == 0 {
             if !pass_str.is_empty() {
-                if crate::system::util::lumie_strcmp_raw(&G_USERS[i].pass, pass_str) != 0 {
+                if crate::system::util::lumie_strcmp_raw(&G_USERS[i].pass[..], pass_str.as_bytes()) != 0 {
                     return -1;
                 }
             }
@@ -228,7 +229,7 @@ pub unsafe fn users_add(name: *const u8, pass: *const u8, role: i32) -> i32 {
         return -1;
     }
     for i in 0..(G_USER_COUNT as usize) {
-        if crate::system::util::lumie_strcmp_raw(&G_USERS[i].name, name_str) == 0 {
+        if crate::system::util::lumie_strcmp_raw(&G_USERS[i].name[..], name_str.as_bytes()) == 0 {
             return -1;
         }
     }
@@ -259,7 +260,7 @@ pub unsafe fn users_remove(name: *const u8) -> i32 {
         return -1;
     }
     for i in 0..(G_USER_COUNT as usize) {
-        if crate::system::util::lumie_strcmp_raw(&G_USERS[i].name, name_str) == 0 {
+        if crate::system::util::lumie_strcmp_raw(&G_USERS[i].name[..], name_str.as_bytes()) == 0 {
             for j in i..(G_USER_COUNT as usize - 1) {
                 G_USERS[j] = G_USERS[j + 1];
             }

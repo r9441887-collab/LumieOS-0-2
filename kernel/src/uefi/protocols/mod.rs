@@ -1,4 +1,3 @@
-#![no_std]
 
 pub mod gop;
 pub mod block_io;

@@ -35,7 +35,7 @@ pub unsafe fn install_pkg_open(path: *const u8, pkg: *mut c_void) -> i32 {
     }
     let file_size = fsz as u32;
 
-    let mut buf = crate::mm::alloc(file_size as u64);
+    let buf = crate::mm::alloc(file_size as u64);
     if buf.is_null() {
         return -1;
     }
@@ -46,7 +46,10 @@ pub unsafe fn install_pkg_open(path: *const u8, pkg: *mut c_void) -> i32 {
     }
     let len = (if (ret as u32) < file_size { ret } else { file_size as i32 }) as u32;
 
-    let magic = [buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]];
+    let magic = [
+        *buf.add(0), *buf.add(1), *buf.add(2), *buf.add(3),
+        *buf.add(4), *buf.add(5), *buf.add(6), *buf.add(7),
+    ];
     if &magic != b"LUMIEPKG" {
         crate::mm::free(buf);
         return -3;
@@ -131,7 +134,7 @@ pub unsafe fn install_pkg_extract(pkg: *mut c_void, file_name: *const u8, buf: *
     ent.size as i32
 }
 
-pub unsafe fn install_pkg_extract_all(pkg: *mut c_void, progress: *mut c_void) -> i32 {
+pub unsafe fn install_pkg_extract_all(pkg: *mut c_void, _progress: *mut c_void) -> i32 {
     let pkg_ref = &mut *(pkg as *mut InstallPkg);
     if pkg_ref.present == 0 || pkg_ref.data.is_null() {
         return -1;

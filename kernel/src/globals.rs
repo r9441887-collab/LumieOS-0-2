@@ -1,9 +1,22 @@
-#![no_std]
 
 use core::cell::UnsafeCell;
 use crate::uefi::types::*;
 use crate::uefi::tables::*;
 
+pub struct SyncUnsafeCell<T>(pub UnsafeCell<T>);
+unsafe impl<T> Sync for SyncUnsafeCell<T> {}
+
+impl<T> SyncUnsafeCell<T> {
+    pub const fn new(val: T) -> Self {
+        Self(UnsafeCell::new(val))
+    }
+
+    pub fn get(&self) -> *mut T {
+        self.0.get()
+    }
+}
+
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct ModuleT {
     pub hdr: *const core::ffi::c_void,
@@ -13,14 +26,14 @@ pub struct ModuleT {
     pub loaded: i32,
 }
 
-static G_ST: UnsafeCell<Option<&'static EfiSystemTable>> = UnsafeCell::new(None);
-static G_IMAGE_HANDLE: UnsafeCell<Option<efi_handle>> = UnsafeCell::new(None);
-static G_BS: UnsafeCell<Option<&'static EfiBootServices>> = UnsafeCell::new(None);
-static G_RT: UnsafeCell<Option<&'static EfiRuntimeServices>> = UnsafeCell::new(None);
-static G_KERNEL_BASE: UnsafeCell<*const core::ffi::c_void> = UnsafeCell::new(core::ptr::null());
-static G_KERNEL_SIZE: UnsafeCell<u32> = UnsafeCell::new(0);
-static G_SHELL_MOD_LOADED: UnsafeCell<u8> = UnsafeCell::new(0);
-static G_SHELL_MOD: UnsafeCell<ModuleT> = UnsafeCell::new(ModuleT {
+static G_ST: SyncUnsafeCell<Option<&'static EfiSystemTable>> = SyncUnsafeCell::new(None);
+static G_IMAGE_HANDLE: SyncUnsafeCell<Option<efi_handle>> = SyncUnsafeCell::new(None);
+static G_BS: SyncUnsafeCell<Option<&'static EfiBootServices>> = SyncUnsafeCell::new(None);
+static G_RT: SyncUnsafeCell<Option<&'static EfiRuntimeServices>> = SyncUnsafeCell::new(None);
+static G_KERNEL_BASE: SyncUnsafeCell<*const core::ffi::c_void> = SyncUnsafeCell::new(core::ptr::null());
+static G_KERNEL_SIZE: SyncUnsafeCell<u32> = SyncUnsafeCell::new(0);
+static G_SHELL_MOD_LOADED: SyncUnsafeCell<u8> = SyncUnsafeCell::new(0);
+static G_SHELL_MOD: SyncUnsafeCell<ModuleT> = SyncUnsafeCell::new(ModuleT {
     hdr: core::ptr::null(),
     base: core::ptr::null_mut(),
     size: 0,
@@ -36,8 +49,8 @@ pub unsafe fn set_image_handle(handle: efi_handle) {
     *G_IMAGE_HANDLE.get() = Some(handle);
 }
 
-pub unsafe fn set_bs(bs: &'static EfiBootServices) {
-    *G_BS.get() = Some(bs);
+pub unsafe fn set_bs(bs: Option<&'static EfiBootServices>) {
+    *G_BS.get() = bs;
 }
 
 pub unsafe fn clear_bs() {

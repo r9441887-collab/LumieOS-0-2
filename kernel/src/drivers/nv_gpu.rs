@@ -4,12 +4,12 @@ use crate::drivers::nv_gpu_fw::*;
 
 pub const NV_GPU_FILL_THRESHOLD: u32 = 64;
 
-pub type NvGpuFillRect = unsafe extern "C" fn(u32, u32, u32, u32, u32) -> i32;
-pub type NvGpuPutPixel = unsafe extern "C" fn(u32, u32, u32) -> i32;
-pub type NvGpuGetPixel = unsafe extern "C" fn(u32, u32) -> u32;
-pub type NvGpuVsync = unsafe extern "C" fn();
-pub type NvGpuFlip = unsafe extern "C" fn();
-pub type NvGpuIsActive = unsafe extern "C" fn() -> i32;
+pub type NvGpuFillRect = unsafe fn(u32, u32, u32, u32, u32) -> i32;
+pub type NvGpuPutPixel = unsafe fn(u32, u32, u32) -> i32;
+pub type NvGpuGetPixel = unsafe fn(u32, u32) -> u32;
+pub type NvGpuVsync = unsafe fn();
+pub type NvGpuFlip = unsafe fn();
+pub type NvGpuIsActive = unsafe fn() -> i32;
 
 #[repr(C)]
 pub struct NvGpuApi {
@@ -77,10 +77,10 @@ pub static mut G_NV_STATE: NvGpuState = NV_STATE_INIT;
 #[repr(C)]
 struct SysBootInfo {
     version: u32,
-    alloc: Option<unsafe extern "C" fn(u32) -> *mut u8>,
-    free: Option<unsafe extern "C" fn(*mut u8)>,
-    log: Option<unsafe extern "C" fn(*const u8)>,
-    log_hex: Option<unsafe extern "C" fn(u64)>,
+    alloc: Option<unsafe fn(u32) -> *mut u8>,
+    free: Option<unsafe fn(*mut u8)>,
+    log: Option<unsafe fn(*const u8)>,
+    log_hex: Option<unsafe fn(u64)>,
     gop_fb_base: u64,
     gop_width: u32,
     gop_height: u32,
@@ -102,6 +102,7 @@ const PUSH_SIZE: u32 = 0x4000;
 
 const FALCON_CPUCTL: u32 = 0x100;
 const FALCON_CPUSTAT: u32 = 0x104;
+#[allow(dead_code)]
 const FALCON_IRQSTAT: u32 = 0x108;
 const FALCON_IRQMODE: u32 = 0x10C;
 const FALCON_IMEMC: u32 = 0x180;
@@ -130,7 +131,7 @@ const PT_SIZE: u32 = 0x1000;
 const PUSH_HDR_2D_FMT: u32 = 0x000000CF;
 const PUSH_HDR_2D_OP: u32 = 0x00000001;
 
-const GK104_GOLDEN_MAIN: &[u32; 64] = &[
+const GK104_GOLDEN_MAIN: &[u32; 62] = &[
     0x404154, 0x00000004, 0x40415C, 0x00000000, 0x404158, 0x00000000,
     0x406020, 0x00001003, 0x406024, 0x00001003,
     0x406800, 0x00000000, 0x406808, 0x00000000, 0x40680C, 0x00000000,
@@ -225,7 +226,7 @@ fn bar_size(bus: u8, dev: u8, func: u8, off: u8) -> u64 {
     let sz_low = pci_read(bus, dev, func, off);
     let size: u64 = if (orig & 0x06) == 0x04 {
         let sz_hi = pci_read(bus, dev, func, off + 4);
-        (!((((sz_hi as u64) << 32) | sz_low as u64) & !0x0F) + 1)
+        !((((sz_hi as u64) << 32) | sz_low as u64) & !0x0F) + 1
     } else {
         (!(sz_low & 0xFFFFFFF0) + 1) as u64
     };
@@ -256,7 +257,7 @@ fn probe_scanout(bar0: u64) -> u64 {
 fn find_gpu() -> i32 {
     unsafe { G_NV_STATE.found = 0 }
 
-    for bus in 0..256u8 {
+    for bus in 0..=255u8 {
         for dev in 0..32u8 {
             let id0 = pci_read(bus, dev, 0, 0);
             if id0 == 0xFFFFFFFF {
@@ -612,7 +613,7 @@ pub unsafe fn nv_gpu_fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) -> i3
 
     asm!("cli", options(nostack));
 
-    let bar1 = G_NV_STATE.bar1_base;
+    let _bar1 = G_NV_STATE.bar1_base;
     let fb = if G_NV_STATE.front_buf != 0 {
         G_NV_STATE.fb_offset
     } else {

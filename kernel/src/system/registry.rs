@@ -1,4 +1,3 @@
-use core::ptr;
 use crate::fs;
 
 pub const REG_MAX_KEYS: usize = 64;
@@ -7,6 +6,7 @@ pub const REG_VAL_LEN: usize = 256;
 pub const REG_FILE: &[u8] = b"/system/registry.cfg\0";
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct RegEntry {
     key: [u8; REG_KEY_LEN],
     val: [u8; REG_VAL_LEN],
@@ -122,7 +122,7 @@ pub unsafe fn reg_get(key: *const u8, val: *mut u8, max_len: u32) -> i32 {
     }
     let key_str = crate::system::util::lumie_str_from_ptr(key);
     for i in 0..G_REG_COUNT {
-        if crate::system::util::lumie_strcmp_raw(&G_REGS[i].key, key_str) == 0 {
+        if crate::system::util::lumie_strcmp_raw(&G_REGS[i].key[..], key_str.as_bytes()) == 0 {
             let vlen = crate::system::util::lumie_strlen_raw(&G_REGS[i].val);
             let vlen = if vlen >= max_len as usize {
                 (max_len - 1) as usize
@@ -144,7 +144,7 @@ pub unsafe fn reg_set(key: *const u8, val: *const u8) -> i32 {
     }
     let key_str = crate::system::util::lumie_str_from_ptr(key);
     for i in 0..G_REG_COUNT {
-        if crate::system::util::lumie_strcmp_raw(&G_REGS[i].key, key_str) == 0 {
+        if crate::system::util::lumie_strcmp_raw(&G_REGS[i].key[..], key_str.as_bytes()) == 0 {
             if !val.is_null() {
                 let val_str = crate::system::util::lumie_str_from_ptr(val);
                 let vlen = val_str.len();
@@ -195,7 +195,7 @@ pub unsafe fn reg_del(key: *const u8) -> i32 {
         return -1;
     }
     for i in 0..G_REG_COUNT {
-        if crate::system::util::lumie_strcmp_raw(&G_REGS[i].key, key_str) == 0 {
+        if crate::system::util::lumie_strcmp_raw(&G_REGS[i].key[..], key_str.as_bytes()) == 0 {
             for j in i..G_REG_COUNT - 1 {
                 G_REGS[j] = G_REGS[j + 1];
             }

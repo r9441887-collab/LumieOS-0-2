@@ -13,5 +13,4 @@ pub mod taskmgr;
 pub mod util;
 pub mod tls;
 pub mod softfloat;
-pub mod math3d;
 pub mod kernel_exports;

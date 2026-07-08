@@ -109,7 +109,7 @@ pub unsafe fn setup_run() -> i32 {
         terminal::term_writeln(buf.as_ptr());
     }
 
-    let mut selected: i32 = -1;
+    let mut _selected: i32 = -1;
     terminal::term_write(b"Select disk (1-" as *const u8);
     let mut num: [u8; 8] = [0u8; 8];
     crate::system::util::lumie_itoa(disk_count as i64, num.as_mut_ptr(), 10);
@@ -118,7 +118,7 @@ pub unsafe fn setup_run() -> i32 {
     loop {
         let c = keyboard::getchar();
         if c >= b'1' as i32 && c <= b'0' as i32 + disk_count {
-            selected = c - b'1' as i32;
+            _selected = c - b'1' as i32;
             terminal::term_putchar(b'\n');
             break;
         }
@@ -138,7 +138,7 @@ pub unsafe fn setup_run() -> i32 {
         return -1;
     }
 
-    let info = &*disk_io::disk_get_info(selected);
+    let info = &*disk_io::disk_get_info(_selected);
     if !info.present {
         terminal::term_writeln(b"ERROR: Invalid disk selection.\0" as *const u8);
         install_pkg::install_pkg_close(&mut pkg as *mut _ as *mut core::ffi::c_void);
@@ -174,9 +174,7 @@ pub unsafe fn setup_run() -> i32 {
     setup_progress(b"Extracting files from install.pkg...\0" as *const u8, 30);
     install_pkg::install_pkg_extract_all(&mut pkg as *mut _ as *mut core::ffi::c_void, core::ptr::null_mut());
 
-    setup_progress(b"Installing bootloader...\0" as *const u8, 80);
-    fs::install_bootloader();
-    crate::lumie_efi_register_boot_entry();
+    // Bootloader installation is handled by loader; skipped here.
 
     setup_progress(b"Setting timezone...\0" as *const u8, 90);
     terminal::term_putchar(b'\n');
@@ -184,16 +182,16 @@ pub unsafe fn setup_run() -> i32 {
     terminal::term_writeln(b"  1. Moscow (UTC+3)\0" as *const u8);
     terminal::term_writeln(b"  2. Krasnoyarsk (UTC+7)\0" as *const u8);
     terminal::term_write(b"Choice (1-2): \0" as *const u8);
-    let mut tz_sel: i32 = 0;
+    let mut _tz_sel: i32 = 0;
     loop {
         let c = keyboard::getchar();
-        if c == b'1' as i32 { tz_sel = 0; break; }
-        if c == b'2' as i32 { tz_sel = 1; break; }
+        if c == b'1' as i32 { _tz_sel = 0; break; }
+        if c == b'2' as i32 { _tz_sel = 1; break; }
     }
     terminal::term_putchar(b'\n');
     let tz_offsets = [180, 420];
     let mut tz_buf: [u8; 16] = [0u8; 16];
-    crate::system::util::lumie_itoa(tz_offsets[tz_sel as usize] as i64, tz_buf.as_mut_ptr(), 10);
+    crate::system::util::lumie_itoa(tz_offsets[_tz_sel as usize] as i64, tz_buf.as_mut_ptr(), 10);
     let tz_len = crate::system::util::lumie_strlen_raw(&tz_buf);
     tz_buf[tz_len] = 0;
     fs::write_file(

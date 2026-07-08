@@ -1,4 +1,3 @@
-#![no_std]
 
 use core::ptr;
 use crate::uefi::types::*;
@@ -99,6 +98,10 @@ pub unsafe fn put_pixel(x: u32, y: u32, color: u32) {
     if x >= FB_INFO.width || y >= FB_INFO.height {
         return;
     }
+    if NV_ACTIVE != 0 {
+        crate::drivers::nv_gpu::nv_gpu_put_pixel(x, y, color);
+        return;
+    }
     let ptr = FB_INFO.base as *mut u32;
     let pitch_px = FB_INFO.pitch / 4;
     ptr::write_volatile(
@@ -110,6 +113,9 @@ pub unsafe fn put_pixel(x: u32, y: u32, color: u32) {
 pub unsafe fn get_pixel(x: u32, y: u32) -> u32 {
     if x >= FB_INFO.width || y >= FB_INFO.height {
         return 0;
+    }
+    if NV_ACTIVE != 0 {
+        return crate::drivers::nv_gpu::nv_gpu_get_pixel(x, y);
     }
     let ptr = FB_INFO.base as *mut u32;
     let pitch_px = FB_INFO.pitch / 4;
@@ -133,13 +139,7 @@ pub unsafe fn fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
         h
     };
 
-    if NV_ACTIVE != 0 && w * h >= nv_gpu::NV_GPU_FILL_THRESHOLD {
-        if let Some(api) = G_NV_GPU_API {
-            if let Some(fill_rect_fn) = api.fill_rect {
-                fill_rect_fn(x, y, w, h, color);
-                return;
-            }
-        }
+    if NV_ACTIVE != 0 {
         nv_gpu::nv_gpu_fill_rect(x, y, w, h, color);
         return;
     }
@@ -164,7 +164,7 @@ pub unsafe fn draw_char(x: u32, y: u32, fg: u32, bg: u32, c: u8) {
     let idx = (c - 32) as usize;
     for row in 0..16 {
         let bits = super::font::FONT_8X16[idx][row];
-        let line = base.offset(((y + row) as u64 * pitch_px as u64 + x as u64) as isize);
+        let line = base.offset(((y as u64 + row as u64) * pitch_px as u64 + x as u64) as isize);
         if bits == 0xFF {
             for col in 0..8 {
                 ptr::write_volatile(line.offset(col as isize), fg);

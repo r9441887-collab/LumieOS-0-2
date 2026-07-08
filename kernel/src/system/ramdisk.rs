@@ -51,10 +51,12 @@ fn write_le32(p: &mut [u8], v: u32) {
     p[3] = (v >> 24) as u8;
 }
 
+#[allow(dead_code)]
 fn read_le16(p: &[u8]) -> u16 {
     p[0] as u16 | ((p[1] as u16) << 8)
 }
 
+#[allow(dead_code)]
 fn read_le32(p: &[u8]) -> u32 {
     p[0] as u32 | ((p[1] as u32) << 8) | ((p[2] as u32) << 16) | ((p[3] as u32) << 24)
 }

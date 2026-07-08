@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::mem;
 use core::ptr;
 use crate::globals;
 use crate::drivers::ahci;
@@ -7,6 +6,7 @@ use crate::drivers::ahci;
 pub const MAX_DISKS: usize = 16;
 pub const DISK_NAME_LEN: usize = 64;
 
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct DiskInfo {
     pub present: bool,
@@ -103,7 +103,7 @@ unsafe fn add_ahci_disk(i: i32) -> i32 {
     }
     let idx = G_DISK_COUNT as usize;
     G_DISK_COUNT += 1;
-    let is_ssd = ahci::get_port_ssd(i);
+    let is_ssd = ahci::get_port_ssd(i) != 0;
     let type_name = if is_ssd { b"SSD" } else { b"HDD" };
     disk_name_with_size(&mut G_DISKS[idx].name, type_name, sc, ss);
     G_DISKS[idx].sector_count = sc;
@@ -148,7 +148,7 @@ unsafe fn disk_enum_ahci_only() -> i32 {
             {
                 G_DISKS[j].is_ahci = true;
                 G_DISKS[j].ahci_port = ahci_port_num;
-                G_DISKS[j].is_ssd = ahci::get_port_ssd(i);
+                G_DISKS[j].is_ssd = ahci::get_port_ssd(i) != 0;
                 G_DISKS[j].is_removable = false;
                 G_DISKS[j].priv_ptr = ptr::null_mut();
                 let mut ss = ahci::get_port_sector_size(i);
@@ -212,7 +212,7 @@ pub unsafe fn disk_enum_all() -> i32 {
             &block_io_guid as *const crate::uefi::guid::EfiGuid,
             ptr::null_mut(),
             &mut handle_count,
-            &mut handles as *mut *mut crate::uefi::types::efi_handle as *mut *mut c_void,
+            &mut handles as *mut *mut crate::uefi::types::efi_handle,
         );
         if st == crate::uefi::types::EFI_SUCCESS && !handles.is_null() && handle_count > 0 {
             for i in 0..handle_count {

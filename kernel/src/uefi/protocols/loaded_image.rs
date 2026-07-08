@@ -1,4 +1,3 @@
-#![no_std]
 
 use crate::uefi::types::*;
 use crate::uefi::tables::EfiSystemTable;

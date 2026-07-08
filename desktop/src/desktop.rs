@@ -1,3 +1,4 @@
+#![allow(static_mut_refs)]
 use crate::render;
 use crate::widgets::Window;
 use crate::DesktopServices;
@@ -14,6 +15,7 @@ pub const RESIZE_W: i32 = 8;
 const WIN_MIN_W: i32 = 200;
 const WIN_MIN_H: i32 = 120;
 const NUM_ICONS: usize = 4;
+#[allow(dead_code)]
 const CUR_W: i32 = 12;
 const CUR_H: i32 = 16;
 const CTX_N: usize = 4;
@@ -30,6 +32,7 @@ const CTX_ITEMS: [&str; CTX_N] = ["New Text File", "Run as Admin", "Refresh", "P
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(u8)]
+#[allow(dead_code)]
 enum WinContent {
     None = 0,
     FileManager = 1,
@@ -84,14 +87,19 @@ fn make_color(r: u8, g: u8, b: u8) -> u32 {
 
 fn c_black() -> u32 { make_color(0, 0, 0) }
 fn c_white() -> u32 { make_color(255, 255, 255) }
+#[allow(dead_code)]
 fn c_bg_top() -> u32 { make_color(0, 0, 0x60) }
+#[allow(dead_code)]
 fn c_bg_bot() -> u32 { make_color(0, 0, 0x20) }
 fn c_grid() -> u32 { make_color(0x35, 0x35, 0x55) }
 fn c_tb_top() -> u32 { make_color(0x2A, 0x2A, 0x3A) }
+#[allow(dead_code)]
 fn c_tb_bot() -> u32 { make_color(0x16, 0x16, 0x26) }
 fn c_title_t() -> u32 { make_color(0, 0x50, 0x90) }
+#[allow(dead_code)]
 fn c_title_b() -> u32 { make_color(0, 0x20, 0x60) }
 fn c_title_it() -> u32 { make_color(0x30, 0x30, 0x50) }
+#[allow(dead_code)]
 fn c_title_ib() -> u32 { make_color(0x18, 0x18, 0x30) }
 fn c_win_bg() -> u32 { make_color(0x3C, 0x3C, 0x3C) }
 fn c_win_ibg() -> u32 { make_color(0x2C, 0x2C, 0x2C) }
@@ -178,7 +186,7 @@ unsafe fn draw_one_icon(svc: &dyn DesktopServices, idx: usize) {
     let x = G_ICON_X[idx];
     let y = G_ICON_Y[idx];
     let r = 6;
-    let glow = if (G_MX >= x && G_MX < x + ICON_W && G_MY >= y && G_MY < y + ICON_H && G_ACTIVE < 0) { 1 } else { 0 };
+    let glow = if G_MX >= x && G_MX < x + ICON_W && G_MY >= y && G_MY < y + ICON_H && G_ACTIVE < 0 { 1 } else { 0 };
     svc.gop_fill_rect((x + 3) as u32, (y + 3) as u32, ICON_W as u32, ICON_H as u32, c_black());
     for i in 0..ICON_H {
         let light = 30 - (i * 25 / ICON_H);
@@ -459,6 +467,7 @@ unsafe fn fm_refresh() {
     G_FM_SEL = 0;
 }
 
+#[allow(dead_code)]
 unsafe fn fm_nav_up() {
     let path = core::str::from_utf8(&G_FM_PATH).unwrap_or("/");
     let trimmed = path.trim_end_matches('\0');
@@ -475,6 +484,7 @@ unsafe fn fm_nav_up() {
     fm_refresh();
 }
 
+#[allow(dead_code)]
 unsafe fn fm_enter_dir(name: &str) {
     if name == ".." {
         fm_nav_up();
@@ -500,6 +510,7 @@ unsafe fn fm_enter_dir(name: &str) {
     fm_refresh();
 }
 
+#[allow(dead_code)]
 unsafe fn fm_open_file(svc: &dyn DesktopServices, name: &str) {
     let cur_len = {
         let mut n = 0usize;
@@ -603,7 +614,7 @@ unsafe fn fm_key(key: i32) -> i32 {
     }
 }
 
-unsafe fn fm_click(cx: i32, cy: i32) -> i32 {
+unsafe fn fm_click(_cx: i32, cy: i32) -> i32 {
     if G_FM_OPEN == 0 { return 0; }
     if cy >= 0 && cy < 30 { return 1; }
     let list_y = cy - 30;
@@ -835,7 +846,6 @@ pub unsafe fn desktop_run(svc: &dyn DesktopServices) {
                                 3 => show_msg("Trash is empty"),
                                 _ => {}
                             }
-                            handled = true;
                         }
                     }
                 }
@@ -899,21 +909,22 @@ unsafe fn draw_string_fb(svc: &dyn DesktopServices, x: u32, y: u32, fg: u32, bg:
             continue;
         }
         let idx = (byte - 32) as usize;
-        for row in 0..16 {
+        for row in 0usize..16 {
             let bits = render::FONT_8X16[idx][row];
-            let line = fb_ptr.offset((y + row) as u64 * pitch_px as u64 + cx as u64);
+            let offset = (y as u64 + row as u64) * pitch_px as u64 + cx as u64;
+            let line = fb_ptr.add(offset as usize);
             if bits == 0xFF {
                 for col in 0..8 {
-                    core::ptr::write_volatile(line.offset(col as isize), fg);
+                    core::ptr::write_volatile(line.add(col), fg);
                 }
             } else if bits == 0x00 {
                 for col in 0..8 {
-                    core::ptr::write_volatile(line.offset(col as isize), bg);
+                    core::ptr::write_volatile(line.add(col), bg);
                 }
             } else {
                 for col in 0..8 {
                     let color = if bits & (0x80 >> col) != 0 { fg } else { bg };
-                    core::ptr::write_volatile(line.offset(col as isize), color);
+                    core::ptr::write_volatile(line.add(col), color);
                 }
             }
         }

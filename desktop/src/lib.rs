@@ -67,7 +67,7 @@ impl<'a> Desktop<'a> {
     }
 
     pub fn run(&mut self) {
-        desktop::desktop_run(self.svc);
+        unsafe { desktop::desktop_run(self.svc); }
     }
 
     pub fn draw_background(&self) {
@@ -81,4 +81,9 @@ impl<'a> Desktop<'a> {
     pub fn handle_click(&mut self, x: i32, y: i32) {
         desktop::handle_desktop_click(self.svc, x, y, self.width, self.height, self.taskbar_height);
     }
+}
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
 }

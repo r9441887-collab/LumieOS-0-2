@@ -1,4 +1,3 @@
-#![no_std]
 
 #[repr(C)]
 #[derive(Clone, Copy)]

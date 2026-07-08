@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::mem;
 use core::ptr;
 
 #[repr(C)]
@@ -8,12 +7,15 @@ pub struct KernelExport {
     pub func: *mut c_void,
 }
 
+unsafe impl Sync for KernelExport {}
+
 #[repr(C)]
 pub struct KernelExports {
     pub version: u32,
     pub api: *const c_void,
 }
 
+#[allow(unused_macros)]
 macro_rules! kexport {
     ($name:ident) => {
         KernelExport {

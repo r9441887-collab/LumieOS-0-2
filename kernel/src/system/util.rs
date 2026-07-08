@@ -1,5 +1,3 @@
-use core::ptr;
-
 pub unsafe fn lumie_strcmp(a: *const u8, b: *const u8) -> i32 {
     let mut i = 0;
     loop {
@@ -80,7 +78,7 @@ pub fn lumie_strlen_str(s: &str) -> u32 {
 }
 
 /* Integer to ASCII */
-pub unsafe fn lumie_itoa(mut num: i64, buf: *mut u8, base: i32) {
+pub unsafe fn lumie_itoa(num: i64, buf: *mut u8, base: i32) {
     let digits = b"0123456789abcdef";
     let mut tmp: [u8; 65] = [0u8; 65];
     let mut i: usize = 0;
@@ -108,7 +106,7 @@ pub unsafe fn lumie_itoa(mut num: i64, buf: *mut u8, base: i32) {
             }
             unum = (-num) as u64;
         } else {
-            unum = (-(num as u64)) as u64;
+            unum = (num as u64).wrapping_neg();
         }
     } else {
         neg = false;

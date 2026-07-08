@@ -39,7 +39,8 @@ const RTL_RXCFG_ACCEPT_BROADCAST: u32 = 1 << 3;
 const RTL_RXCFG_ACCEPT_MYPHYS: u32 = 1 << 1;
 
 const RTL_CPLUS_RXCHKSUM: u16 = 1 << 5;
-const RTL_CPLUS_DAC: u16 = 1 << 24;
+#[allow(dead_code)]
+const RTL_CPLUS_DAC: u32 = 1 << 24;
 const RTL_CPLUS_VER_MAGIC_V1: u16 = 0x03 << 12;
 const RTL_CPLUS_VER_MAGIC_V2: u16 = 0x07 << 12;
 
@@ -266,10 +267,10 @@ unsafe fn rtl_init(bus: u8, dev: u8, func: u8, bar2: u64) -> i32 {
     rtl_eeprom_lock();
     stall_us(1000);
 
-    let mut mac_valid = 0;
+    let mut _mac_valid = 0;
     for i in 0..6 {
         if G_RTL_MAC[i] != 0x00 && G_RTL_MAC[i] != 0xFF {
-            mac_valid = 1;
+            _mac_valid = 1;
             break;
         }
     }
@@ -301,7 +302,7 @@ unsafe fn rtl_init(bus: u8, dev: u8, func: u8, bar2: u64) -> i32 {
     );
 
     let cplus = mmio_read16(RTL_CPLUS_CMD);
-    mmio_write16(cplus | cplus_magic | RTL_CPLUS_RXCHKSUM | RTL_CPLUS_DAC, RTL_CPLUS_CMD);
+    mmio_write16(cplus | cplus_magic | RTL_CPLUS_RXCHKSUM, RTL_CPLUS_CMD);
 
     mmio_write8(0x10, RTL_EARLY_TX_THRES);
     mmio_write16(0x0000, RTL_INTR_MASK);
@@ -364,19 +365,25 @@ unsafe fn rtl_send(buf: *const u8, len: u32) -> i32 {
 
     let idx = G_TX_CUR;
 
-    let mut timeout = 10000;
+    let mut timeout = 50000;
     loop {
         if G_TX_RING.0[idx].status & RTL_OWN_BIT == 0 {
             break;
         }
-        stall_us(10);
+        if mmio_read8(RTL_PHY_STATUS) & RTL_PHY_LINK_UP == 0 {
+            G_TX_RING.0[idx].status = 0;
+            return -1;
+        }
+        stall_us(5);
         timeout -= 1;
         if timeout <= 0 {
+            G_TX_RING.0[idx].status = 0;
             return -1;
         }
     }
 
     copy_nonoverlapping(buf, G_TX_BUF.0[idx].as_mut_ptr(), len as usize);
+    asm!("", options(nostack)); // compiler barrier
 
     let mut status = RTL_OWN_BIT | RTL_FS_BIT | RTL_LS_BIT | len;
     if idx == RTL_TX_RING_SZ - 1 {
@@ -386,7 +393,7 @@ unsafe fn rtl_send(buf: *const u8, len: u32) -> i32 {
 
     asm!("sfence", options(nostack));
 
-    mmio_write8(0x01, RTL_TXPOLL);
+    mmio_write8(0xF0, RTL_TXPOLL);
 
     G_TX_CUR = (idx + 1) % RTL_TX_RING_SZ;
     0
@@ -408,6 +415,7 @@ unsafe fn rtl_recv(buf: *mut u8, len: *mut u32) -> i32 {
 
     if status_word & RTL_RX_ERR_MASK != 0 {
         write_bytes(G_RX_BUF.0[idx].as_mut_ptr(), 0, RTL_PKT_BUF_SZ as usize);
+        asm!("mfence", options(nostack));
         G_RX_RING.0[idx].status = RTL_OWN_BIT | RTL_PKT_BUF_SZ;
         if idx == RTL_RX_RING_SZ - 1 {
             G_RX_RING.0[idx].status |= RTL_EOR_BIT;
@@ -422,6 +430,7 @@ unsafe fn rtl_recv(buf: *mut u8, len: *mut u32) -> i32 {
 
     if pkt_len < 12 {
         write_bytes(G_RX_BUF.0[idx].as_mut_ptr(), 0, RTL_PKT_BUF_SZ as usize);
+        asm!("mfence", options(nostack));
         G_RX_RING.0[idx].status = RTL_OWN_BIT | RTL_PKT_BUF_SZ;
         if idx == RTL_RX_RING_SZ - 1 {
             G_RX_RING.0[idx].status |= RTL_EOR_BIT;
@@ -438,6 +447,7 @@ unsafe fn rtl_recv(buf: *mut u8, len: *mut u32) -> i32 {
     }
 
     write_bytes(G_RX_BUF.0[idx].as_mut_ptr(), 0, RTL_PKT_BUF_SZ as usize);
+    asm!("mfence", options(nostack));
     G_RX_RING.0[idx].status = RTL_OWN_BIT | RTL_PKT_BUF_SZ;
     if idx == RTL_RX_RING_SZ - 1 {
         G_RX_RING.0[idx].status |= RTL_EOR_BIT;
@@ -496,7 +506,7 @@ fn rtl_probe() -> i32 {
             }
         }
         bus += 1;
-        if bus >= 256 {
+        if bus >= 255 {
             break;
         }
     }

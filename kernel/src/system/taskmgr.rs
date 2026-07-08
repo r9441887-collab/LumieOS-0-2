@@ -11,8 +11,11 @@ pub struct TaskInfo {
 }
 
 const RUNNING: i32 = 0;
+#[allow(dead_code)]
 const READY: i32 = 1;
+#[allow(dead_code)]
 const BLOCKED: i32 = 2;
+#[allow(dead_code)]
 const DEAD: i32 = 3;
 
 fn state_name(state: i32) -> &'static [u8] {
@@ -51,7 +54,7 @@ unsafe fn draw_header() {
 }
 
 unsafe fn draw_processes(start_row: i32, max_rows: i32) {
-    let cnt = sched::get_count();
+    let cnt = sched::sched_get_count();
     let cnt = if cnt < 0 { 0 } else if cnt > max_rows - 1 { max_rows - 1 } else { cnt };
 
     let mut row = start_row;
@@ -69,17 +72,18 @@ unsafe fn draw_processes(start_row: i32, max_rows: i32) {
     }
 
     for i in 0..cnt {
-        let name = sched::get_name(i);
-        let state = sched::get_state(i);
-        let prio = sched::get_priority(i);
+        let name = sched::sched_get_name(i);
+        let state = sched::sched_get_state(i);
+        let prio = sched::sched_get_priority(i);
 
         terminal::term_set_pos(4, row);
         terminal::term_set_fg(0xFFFFFF);
 
-        if !name.is_null() {
+        if let Some(n) = name {
             let mut ni = 0;
-            while *name.add(ni) != 0 && ni < 20 {
-                terminal::term_putchar(*name.add(ni));
+            let bytes = n.as_bytes();
+            while ni < bytes.len() && ni < 20 {
+                terminal::term_putchar(bytes[ni]);
                 ni += 1;
             }
             for _ in ni..20 {
@@ -145,7 +149,8 @@ unsafe fn draw_disks(start_row: i32) {
             buf[pos] = b' ';
             pos += 1;
             let name_len = crate::system::util::lumie_strlen_raw(&(*info).name);
-            buf[pos..pos + name_len].copy_from_slice(&(*info).name[..name_len]);
+            let name_slice = core::slice::from_raw_parts(core::ptr::addr_of!((*info).name) as *const u8, name_len);
+            buf[pos..pos + name_len].copy_from_slice(name_slice);
             pos += name_len;
             buf[pos] = b' ';
             pos += 1;
@@ -185,7 +190,7 @@ pub unsafe fn taskmgr_run() {
         terminal::term_set_fg(0x444444);
         terminal::term_set_bg(0x000000);
         terminal::term_set_pos(0, rows - 1);
-        for x in 0..w {
+        for _x in 0..w {
             terminal::term_putchar(b' ');
         }
         terminal::term_set_pos(0, rows - 1);
@@ -206,21 +211,22 @@ pub unsafe fn taskmgr_list_tasks(buf: *mut TaskInfo, max: i32) -> i32 {
     if buf.is_null() || max <= 0 {
         return 0;
     }
-    let cnt = sched::get_count();
+    let cnt = sched::sched_get_count();
     let cnt = if cnt < 0 { 0 } else if cnt > max { max } else { cnt };
     for i in 0..cnt {
         let task = &mut *buf.add(i as usize);
-        let name_ptr = sched::get_name(i);
+        let name = sched::sched_get_name(i);
         task.name.fill(0);
-        if !name_ptr.is_null() {
+        if let Some(n) = name {
+            let bytes = n.as_bytes();
             let mut ni = 0;
-            while *name_ptr.add(ni) != 0 && ni < 31 {
-                task.name[ni] = *name_ptr.add(ni);
+            while ni < bytes.len() && ni < 31 {
+                task.name[ni] = bytes[ni];
                 ni += 1;
             }
         }
-        task.state = sched::get_state(i);
-        task.priority = sched::get_priority(i);
+        task.state = sched::sched_get_state(i);
+        task.priority = sched::sched_get_priority(i);
     }
     cnt
 }

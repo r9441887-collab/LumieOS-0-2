@@ -1,7 +1,6 @@
 use core::ffi::c_void;
 use core::mem;
 use core::ptr;
-use crate::globals;
 use crate::fs;
 
 pub const MODULE_MAGIC: u32 = 0x4D4F444C;
@@ -67,7 +66,7 @@ pub struct ModuleT {
     pub loaded: i32,
 }
 
-pub type ModuleEntryFn = unsafe extern "C" fn(*const c_void, *mut *mut c_void) -> i32;
+pub type ModuleEntryFn = unsafe fn(*const c_void, *mut *mut c_void) -> i32;
 
 unsafe fn lsh_load(data: *const u8, data_size: u32, kapi: *const c_void, mod_: &mut ModuleT) -> i32 {
     if data.is_null() || data_size < mem::size_of::<LshHeader>() as u32 {
@@ -115,7 +114,7 @@ unsafe fn lsh_load(data: *const u8, data_size: u32, kapi: *const c_void, mod_: &
             if (t_off + 8) > mod_size {
                 continue;
             }
-            if n_off >= strtab_sz {
+            if (n_off as u32) >= strtab_sz {
                 continue;
             }
             let name = crate::system::util::lumie_str_from_ptr(strtab.add(n_off as usize));
@@ -146,7 +145,7 @@ unsafe fn lsh_load(data: *const u8, data_size: u32, kapi: *const c_void, mod_: &
         entry_rva = 0;
     }
 
-    mod_.base = mod_base;
+    mod_.base = mod_base as *mut c_void;
     mod_.size = mod_size;
     mod_.loaded = 1;
     mod_.hdr = hdr as *const LshHeader as *const c_void;
@@ -203,13 +202,13 @@ unsafe fn sys_load_format(buf: *const u8, buf_size: u32, kapi: *const c_void, mo
             let entry = &*imp.add(i as usize);
             let off = entry.thunk_offset;
             let ord = entry.ordinal as usize;
-            if (off + 8) <= mod_size && (ord * 8) < mem::size_of::<crate::api::KernelApi>() {
+            if (off + 8) <= mod_size && (ord * 8) < mem::size_of::<crate::api::KernelApiV1>() {
                 *(mod_base.add(off as usize) as *mut u64) = *kapi_funcs.add(ord);
             }
         }
     }
 
-    mod_.base = mod_base;
+    mod_.base = mod_base as *mut c_void;
     mod_.size = mod_size;
     mod_.loaded = 1;
 
@@ -235,7 +234,7 @@ pub unsafe fn module_load(fat_path: *const u8, kapi: *const c_void, mod_: *mut M
     if fsz < 64 {
         return -2;
     }
-    let mut buf = crate::mm::alloc(fsz as u64);
+    let buf = crate::mm::alloc(fsz as u64);
     if buf.is_null() {
         return -3;
     }
@@ -266,7 +265,7 @@ pub unsafe fn module_unload(mod_: *mut ModuleT) {
     if !mod_.is_null() {
         let m = &mut *mod_;
         if !m.base.is_null() {
-            crate::mm::free(m.base);
+            crate::mm::free(m.base as *mut u8);
             m.base = ptr::null_mut();
             m.size = 0;
             m.hdr = ptr::null();

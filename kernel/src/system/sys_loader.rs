@@ -21,17 +21,17 @@ pub struct SysHeader {
 #[repr(C)]
 pub struct SysBootInfo {
     pub version: u32,
-    pub alloc: Option<unsafe extern "C" fn(u32) -> *mut c_void>,
-    pub free: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub log: Option<unsafe extern "C" fn(*const u8)>,
-    pub log_hex: Option<unsafe extern "C" fn(u64)>,
+    pub alloc: Option<unsafe fn(u32) -> *mut c_void>,
+    pub free: Option<unsafe fn(*mut c_void)>,
+    pub log: Option<unsafe fn(*const u8)>,
+    pub log_hex: Option<unsafe fn(u64)>,
     pub gop_fb_base: u64,
     pub gop_width: u32,
     pub gop_height: u32,
     pub gop_pitch: u32,
 }
 
-pub type SysEntryFn = Option<unsafe extern "C" fn(*const SysBootInfo, *mut *mut c_void) -> i32>;
+pub type SysEntryFn = Option<unsafe fn(*const SysBootInfo, *mut *mut c_void) -> i32>;
 
 #[repr(C)]
 pub struct SysModule {
@@ -40,7 +40,7 @@ pub struct SysModule {
     pub entry: SysEntryFn,
 }
 
-pub unsafe fn sys_load(path: *const u8, boot_info: *mut c_void, mod_out: *mut c_void) -> i32 {
+pub unsafe fn sys_load(path: *const u8, _boot_info: *mut c_void, mod_out: *mut c_void) -> i32 {
     if path.is_null() || mod_out.is_null() {
         return -1;
     }
@@ -54,7 +54,7 @@ pub unsafe fn sys_load(path: *const u8, boot_info: *mut c_void, mod_out: *mut c_
         return -2;
     }
 
-    let mut buf = crate::mm::alloc(fsz as u64);
+    let buf = crate::mm::alloc(fsz as u64);
     if buf.is_null() {
         return -3;
     }
@@ -97,7 +97,7 @@ pub unsafe fn sys_load(path: *const u8, boot_info: *mut c_void, mod_out: *mut c_
         }
     }
 
-    mod_ref.base = mod_base;
+    mod_ref.base = mod_base as *mut c_void;
     mod_ref.size = mod_size;
     mod_ref.entry = Some(mem::transmute(mod_base.add(hdr.entry as usize)));
 
@@ -109,7 +109,7 @@ pub unsafe fn sys_free(mod_: *mut SysModule) {
     if !mod_.is_null() {
         let m = &mut *mod_;
         if !m.base.is_null() {
-            crate::mm::free(m.base);
+            crate::mm::free(m.base as *mut u8);
             m.base = ptr::null_mut();
             m.size = 0;
             m.entry = None;

@@ -1,13 +1,12 @@
-#![no_std]
 
 #[repr(C)]
 pub struct NvGpuApi {
-    pub fill_rect: Option<unsafe extern "C" fn(u32, u32, u32, u32, u32)>,
-    pub put_pixel: Option<unsafe extern "C" fn(u32, u32, u32)>,
-    pub get_pixel: Option<unsafe extern "C" fn(u32, u32) -> u32>,
-    pub is_active: Option<unsafe extern "C" fn() -> i32>,
-    pub set_fb: Option<unsafe extern "C" fn(u64, u32, u32, u32)>,
-    pub init_3d: Option<unsafe extern "C" fn() -> i32>,
+    pub fill_rect: Option<unsafe fn(u32, u32, u32, u32, u32)>,
+    pub put_pixel: Option<unsafe fn(u32, u32, u32)>,
+    pub get_pixel: Option<unsafe fn(u32, u32) -> u32>,
+    pub is_active: Option<unsafe fn() -> i32>,
+    pub set_fb: Option<unsafe fn(u64, u32, u32, u32)>,
+    pub init_3d: Option<unsafe fn() -> i32>,
 }
 
 pub static mut G_NV_GPU_API: Option<&'static NvGpuApi> = None;

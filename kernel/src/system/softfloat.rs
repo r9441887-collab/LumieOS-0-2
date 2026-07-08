@@ -50,7 +50,7 @@ pub fn f32_add(a: f32, b: f32) -> f32 {
     if f32_is_nan(ub) { return b; }
 
     let sa = f32_sign(ua);
-    let sb = f32_sign(ub);
+    let mut sb = f32_sign(ub);
     let mut ea = f32_exp(ua) as i32;
     let mut eb = f32_exp(ub) as i32;
     let mut ma = f32_mant(ua);
@@ -76,7 +76,7 @@ pub fn f32_add(a: f32, b: f32) -> f32 {
     let rsh = ea - eb;
     if rsh > 25 { mb = 0; } else { mb >>= rsh as u32; }
 
-    let sig;
+    let mut sig;
     if sa == sb {
         sig = ma + mb;
         if sig & 0x1000000 != 0 { sig >>= 1; ea += 1; }
@@ -246,7 +246,7 @@ pub fn f32_to_i32(a: f32) -> i32 {
     let exp = f32_exp(u) as i32 - 127;
     let mant = f32_mant(u) | 0x800000;
     if exp > 30 {
-        return if sign != 0 { 0x80000000i32 } else { 0x7FFFFFFFi32 };
+        return if sign != 0 { i32::MIN } else { i32::MAX };
     }
     if exp < 0 { return 0; }
     let val = (mant << 6) >> (23 - exp) as u32;

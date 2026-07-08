@@ -125,6 +125,7 @@ unsafe fn sha256(d: *const u8, n: u32, h: *mut u8) {
 }
 
 /* HMAC-SHA256 */
+#[allow(dead_code)]
 unsafe fn hmac_sha256(k: *const u8, kl: u32, d: *const u8, dl: u32, m: *mut u8) {
     let mut tk = [0u8; 32];
     let (k_ptr, k_len) = if kl > 64 {
@@ -154,6 +155,7 @@ unsafe fn hmac_sha256(k: *const u8, kl: u32, d: *const u8, dl: u32, m: *mut u8) 
 }
 
 /* AES-128-CBC */
+#[allow(dead_code)]
 const SB: [u8; 256] = [
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
     0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
@@ -173,6 +175,7 @@ const SB: [u8; 256] = [
     0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16,
 ];
 
+#[allow(dead_code)]
 fn aes_keyexp(k: &[u8], rk: &mut [u8]) {
     let w = unsafe { &mut *(rk.as_mut_ptr() as *mut [u32; 44]) };
     for i in 0..4 {
@@ -192,6 +195,7 @@ fn aes_keyexp(k: &[u8], rk: &mut [u8]) {
     }
 }
 
+#[allow(dead_code)]
 fn aes_enc(inp: &[u8], out: &mut [u8], rk: &[u8]) {
     let kp = unsafe { &*(rk.as_ptr() as *const [u32; 44]) };
     let mut s = [0u32; 4];
@@ -226,6 +230,7 @@ fn aes_enc(inp: &[u8], out: &mut [u8], rk: &[u8]) {
     }
 }
 
+#[allow(dead_code)]
 fn aes_cbc_enc(k: &[u8], iv: &[u8], inp: &[u8], out: &mut [u8]) {
     let mut rk = [0u8; 176];
     aes_keyexp(k, &mut rk);

@@ -1,6 +1,3 @@
-#![no_std]
-
-use crate::uefi::types::*;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,4 +1,3 @@
-#![no_std]
 
 use core::ptr;
 use lumie_std::LumieColor;
@@ -138,7 +137,7 @@ pub unsafe fn term_putchar(c: u8) {
             TERM.x = 0;
             return;
         }
-        b'\b' => {
+        b'\x08' => {
             if TERM.x > 0 {
                 TERM.x -= 1;
             }

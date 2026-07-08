@@ -10,6 +10,7 @@ struct HeapHeader {
 }
 
 impl HeapHeader {
+    #[allow(dead_code)]
     const fn new() -> Self {
         Self {
             next: core::ptr::null_mut(),

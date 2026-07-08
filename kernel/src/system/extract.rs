@@ -1,5 +1,4 @@
 use core::ptr;
-use core::mem;
 use crate::console::terminal;
 use crate::fs;
 
@@ -97,7 +96,7 @@ impl HuffmanTree {
             if len == 0 {
                 continue;
             }
-            let mut c = code[len];
+            let c = code[len];
             code[len] += 1;
             let mut node = root as usize;
             for b in (0..len).rev() {
@@ -173,7 +172,7 @@ unsafe fn crc32_calc(mut crc: u32, d: *const u8, sz: u32) -> u32 {
         crc32_init();
     }
     for i in 0..sz as usize {
-        crc = CRC32_TAB[((crc ^ *d.add(i)) & 0xFF) as usize] ^ (crc >> 8);
+        crc = CRC32_TAB[((crc ^ (*d.add(i) as u32)) & 0xFF) as usize] ^ (crc >> 8);
     }
     crc
 }
@@ -398,7 +397,7 @@ unsafe fn tar_extract(data: *const u8, size: u32) -> i32 {
         }
         let fsz = parse_oct(&h.size);
         let mut path: [u8; 256] = [0u8; 256];
-        let mut plen: usize = 0;
+        let mut _plen: usize = 0;
         if h.prefix[0] != 0 {
             let mut ppl = 0;
             while ppl < 155 && h.prefix[ppl] != 0 { ppl += 1; }
@@ -406,18 +405,18 @@ unsafe fn tar_extract(data: *const u8, size: u32) -> i32 {
             while pnl < 100 && h.name[pnl] != 0 { pnl += 1; }
             if ppl + 1 + pnl > 255 { break; }
             path[..ppl].copy_from_slice(&h.prefix[..ppl]);
-            plen = ppl;
-            path[plen] = b'/';
-            plen += 1;
-            path[plen..plen + pnl].copy_from_slice(&h.name[..pnl]);
-            plen += pnl;
+            _plen = ppl;
+            path[_plen] = b'/';
+            _plen += 1;
+            path[_plen.._plen + pnl].copy_from_slice(&h.name[..pnl]);
+            _plen += pnl;
         } else {
             let mut pnl = 0;
             while pnl < 100 && h.name[pnl] != 0 { pnl += 1; }
             path[..pnl].copy_from_slice(&h.name[..pnl]);
-            plen = pnl;
+            _plen = pnl;
         }
-        path[plen] = 0;
+        path[_plen] = 0;
 
         terminal::term_set_fg(if h.typeflag == b'5' { 0x55FFFF } else { 0x00FF00 });
         if h.typeflag == b'5' {
@@ -431,7 +430,7 @@ unsafe fn tar_extract(data: *const u8, size: u32) -> i32 {
         let doff = off + 512;
         if (h.typeflag == b'0' || h.typeflag == 0) && fsz > 0 {
             if doff + fsz <= size {
-                fs::fat_write_file(path.as_ptr() as *const u8, data.add(doff as usize) as *const core::ffi::c_void, fsz);
+                fs::fat32::write_file(path.as_ptr() as *const u8, data.add(doff as usize) as *const u8, fsz);
             }
         }
         off += 512 + ((fsz + 511) / 512) * 512;
@@ -450,7 +449,7 @@ pub unsafe fn extract_gzip_tar(filename: *const u8) -> i32 {
     }
     let fname = crate::system::util::lumie_str_from_ptr(filename);
 
-    let fsz = fs::fat_get_file_size(fname);
+    let fsz = fs::fat32::get_file_size(fname.as_ptr() as *const u8);
     if fsz <= 0 {
         terminal::term_set_fg(0xFF4444);
         terminal::term_write(b"File not found: \0" as *const u8);
@@ -473,7 +472,7 @@ pub unsafe fn extract_gzip_tar(filename: *const u8) -> i32 {
         return -1;
     }
 
-    if fs::fat_read_file(fname, data, fsz as u32) != fsz {
+    if fs::fat32::read_file(fname.as_ptr() as *const u8, data, fsz as u32) != fsz {
         crate::mm::free(data);
         terminal::term_set_fg(0xFF4444);
         terminal::term_writeln(b"Read error\0" as *const u8);

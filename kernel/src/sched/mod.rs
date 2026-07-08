@@ -22,11 +22,11 @@ pub unsafe fn sched_init() {
     let cs_sel: u16 = 0x08;
     let gate_attr: u8 = 0x8E;
 
-    idt::idt_set_entry(0x20, pit_isr as u64, cs_sel, gate_attr);
+    idt::idt_set_entry(0x20, pit_isr as *const () as u64, cs_sel, gate_attr);
 
     for i in 0..256usize {
         if i != 0x20 {
-            idt::idt_set_entry(i, stub_isr as u64, cs_sel, gate_attr);
+            idt::idt_set_entry(i, stub_isr as *const () as u64, cs_sel, gate_attr);
         }
     }
 
@@ -62,7 +62,7 @@ pub unsafe fn sched_init() {
     asm!("sti");
 }
 
-pub unsafe fn sched_create_task(name: &str, entry: extern "C" fn(), priority: u8) -> i32 {
+pub unsafe fn sched_create_task(name: &str, entry: fn(), priority: u8) -> i32 {
     if SCHED.num_tasks as usize >= MAX_TASKS {
         return -1;
     }
@@ -97,7 +97,7 @@ pub unsafe fn sched_create_task(name: &str, entry: extern "C" fn(), priority: u8
     sp = sp.sub(1);
     *sp = 0x08; // CS
     sp = sp.sub(1);
-    *sp = entry as u64; // RIP
+    *sp = entry as *const () as u64; // RIP
     for _ in 0..15 {
         sp = sp.sub(1);
         *sp = 0;

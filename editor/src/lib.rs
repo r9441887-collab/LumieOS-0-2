@@ -51,3 +51,8 @@ pub fn editor_run(services: &dyn EditorServices, filename: &str) {
     services.term_set_cursor(true);
     services.term_clear(LumieColor::Blue);
 }
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
+}

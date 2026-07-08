@@ -1,16 +1,10 @@
-#![no_std]
-
-pub type u8 = core::primitive::u8;
-pub type u16 = core::primitive::u16;
-pub type u32 = core::primitive::u32;
-pub type u64 = core::primitive::u64;
+#![allow(non_camel_case_types)]
+pub type uintn = core::primitive::u64;
 pub type s8 = core::primitive::i8;
 pub type s16 = core::primitive::i16;
-pub type i64 = core::primitive::i64;
-pub type usize = core::primitive::u64;
-pub type uintn = core::primitive::u64;
 pub type efi_status = core::primitive::u64;
 pub type efi_handle = *mut core::ffi::c_void;
+pub type EfiHandle = *mut core::ffi::c_void;
 pub type efi_event = *mut core::ffi::c_void;
 pub type char16 = core::primitive::u16;
 pub type boolean = core::primitive::u8;
@@ -60,6 +54,7 @@ pub const fn signature_64(a: u8, b: u8, c: u8, d: u8, e: u8, f: u8, g: u8, h: u8
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct EfiStatus(pub efi_status);
 
 impl EfiStatus {

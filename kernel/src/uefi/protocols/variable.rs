@@ -1,6 +1,3 @@
-#![no_std]
-
-use crate::uefi::types::*;
 
 pub const EFI_VARIABLE_NON_VOLATILE: u32 = 0x00000001;
 pub const EFI_VARIABLE_BOOTSERVICE_ACCESS: u32 = 0x00000002;

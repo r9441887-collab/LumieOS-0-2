@@ -1,5 +1,5 @@
 use crate::buffer;
-use crate::editor::{EditorState, MAX_LINE_LEN};
+use crate::editor::EditorState;
 
 pub fn render(ed: &EditorState, services: &dyn crate::EditorServices) {
     let ox = ed.render_offx;

@@ -25,6 +25,7 @@ pub(crate) fn str_cpy(dst: &mut [u8], src: &[u8]) {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn str_cat(dst: &mut [u8], src: &[u8]) {
     let start = str_len(dst) as usize;
     if start >= dst.len() {
@@ -113,7 +114,7 @@ pub fn delete_char(ed: &mut EditorState) {
         let prev_li = (ed.cursor_y - 1) as usize;
         let prev_len = str_len(&ed.lines[prev_li]);
         let mut i = 0i32;
-        while i < len && (prev_len + i) as usize < MAX_LINE_LEN - 1 {
+        while i < len && ((prev_len + i) as usize) < (MAX_LINE_LEN - 1) {
             ed.lines[prev_li][(prev_len + i) as usize] = ed.lines[li][i as usize];
             i += 1;
         }
@@ -125,7 +126,8 @@ pub fn delete_char(ed: &mut EditorState) {
 
         let mut i = ed.cursor_y as usize;
         while i < (ed.num_lines - 1) as usize {
-            str_cpy(&mut ed.lines[i], &ed.lines[i + 1]);
+            let (left, right) = ed.lines.split_at_mut(i + 1);
+            str_cpy(&mut left[i], &right[0]);
             i += 1;
         }
         ed.num_lines -= 1;
@@ -145,7 +147,8 @@ pub fn newline(ed: &mut EditorState) {
 
     let mut i = ed.num_lines as usize;
     while i > ed.cursor_y as usize + 1 {
-        str_cpy(&mut ed.lines[i], &ed.lines[i - 1]);
+        let (left, right) = ed.lines.split_at_mut(i);
+        str_cpy(&mut left[i - 1], &right[0]);
         i -= 1;
     }
 
