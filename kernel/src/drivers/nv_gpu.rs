@@ -28,22 +28,22 @@ pub struct NvGpuState {
     pub height: u32,
     pub pitch: u32,
     pub api_valid: i32,
-    bar0_base: u64,
-    bar1_base: u64,
-    bar1_size: u64,
-    fb_offset: u64,
-    found: i32,
-    fifo_ready: i32,
-    channel_id: u32,
-    push_base: u64,
-    push_size: u32,
-    push_pos: u32,
-    double_buffer: i32,
-    backbuffer_offset: u64,
-    front_buf: i32,
-    gpu_bus: u8,
-    gpu_dev: u8,
-    gpu_func: u8,
+    pub bar0_base: u64,
+    pub bar1_base: u64,
+    pub bar1_size: u64,
+    pub fb_offset: u64,
+    pub found: i32,
+    pub fifo_ready: i32,
+    pub channel_id: u32,
+    pub push_base: u64,
+    pub push_size: u32,
+    pub push_pos: u32,
+    pub double_buffer: i32,
+    pub backbuffer_offset: u64,
+    pub front_buf: i32,
+    pub gpu_bus: u8,
+    pub gpu_dev: u8,
+    pub gpu_func: u8,
 }
 
 pub static mut G_NV_GPU_API: Option<&'static NvGpuApi> = None;
@@ -556,6 +556,21 @@ fn init_3d() -> i32 {
     }
 }
 
+pub unsafe fn nv_gpu_init_from_fb(fb_base: u64, width: u32, height: u32, pitch: u32) -> i32 {
+    let info = SysBootInfo {
+        version: 1,
+        alloc: None,
+        free: None,
+        log: None,
+        log_hex: None,
+        gop_fb_base: fb_base,
+        gop_width: width,
+        gop_height: height,
+        gop_pitch: pitch,
+    };
+    nv_gpu_init(&info as *const _ as *const core::ffi::c_void)
+}
+
 pub unsafe fn nv_gpu_init(boot_info: *const core::ffi::c_void) -> i32 {
     G_NV_STATE = NV_STATE_INIT;
 
@@ -591,6 +606,15 @@ pub unsafe fn nv_gpu_init(boot_info: *const core::ffi::c_void) -> i32 {
         }
     }
 
+    let fb_size = (G_NV_STATE.pitch as u64) * (G_NV_STATE.height as u64);
+    if G_NV_STATE.fb_offset + fb_size * 2 <= bar1_sz {
+        G_NV_STATE.backbuffer_offset = G_NV_STATE.fb_offset + fb_size;
+        G_NV_STATE.double_buffer = 1;
+    } else {
+        G_NV_STATE.backbuffer_offset = G_NV_STATE.fb_offset;
+        G_NV_STATE.double_buffer = 0;
+    }
+
     G_NV_STATE.fb_base = bar1 + G_NV_STATE.fb_offset;
 
     fifo_init();
@@ -613,11 +637,14 @@ pub unsafe fn nv_gpu_fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) -> i3
 
     asm!("cli", options(nostack));
 
-    let _bar1 = G_NV_STATE.bar1_base;
-    let fb = if G_NV_STATE.front_buf != 0 {
-        G_NV_STATE.fb_offset
+    let fb = if G_NV_STATE.double_buffer != 0 {
+        if G_NV_STATE.front_buf != 0 {
+            G_NV_STATE.backbuffer_offset
+        } else {
+            G_NV_STATE.fb_offset
+        }
     } else {
-        G_NV_STATE.backbuffer_offset
+        G_NV_STATE.fb_offset
     };
     let pitch = G_NV_STATE.pitch;
     let dst_addr = (fb + y as u64 * pitch as u64 + x as u64 * 4) as u32;
@@ -671,10 +698,14 @@ pub unsafe fn nv_gpu_put_pixel(x: u32, y: u32, color: u32) -> i32 {
     if x >= G_NV_STATE.width || y >= G_NV_STATE.height {
         return -1;
     }
-    let base = if G_NV_STATE.front_buf != 0 {
-        G_NV_STATE.fb_offset
+    let base = if G_NV_STATE.double_buffer != 0 {
+        if G_NV_STATE.front_buf != 0 {
+            G_NV_STATE.backbuffer_offset
+        } else {
+            G_NV_STATE.fb_offset
+        }
     } else {
-        G_NV_STATE.backbuffer_offset
+        G_NV_STATE.fb_offset
     };
     let off = base + y as u64 * G_NV_STATE.pitch as u64 + x as u64 * 4;
     vram_write32(G_NV_STATE.bar1_base, off, color);
@@ -694,10 +725,14 @@ pub unsafe fn nv_gpu_get_pixel(x: u32, y: u32) -> u32 {
     if x >= G_NV_STATE.width || y >= G_NV_STATE.height {
         return 0;
     }
-    let base = if G_NV_STATE.front_buf != 0 {
-        G_NV_STATE.fb_offset
+    let base = if G_NV_STATE.double_buffer != 0 {
+        if G_NV_STATE.front_buf != 0 {
+            G_NV_STATE.backbuffer_offset
+        } else {
+            G_NV_STATE.fb_offset
+        }
     } else {
-        G_NV_STATE.backbuffer_offset
+        G_NV_STATE.fb_offset
     };
     let off = base + y as u64 * G_NV_STATE.pitch as u64 + x as u64 * 4;
     vram_read32(G_NV_STATE.bar1_base, off)
@@ -740,9 +775,9 @@ pub unsafe fn nv_gpu_flip() {
     }
     let bar0 = G_NV_STATE.bar0_base;
     let new_base = if G_NV_STATE.front_buf != 0 {
-        G_NV_STATE.fb_offset
-    } else {
         G_NV_STATE.backbuffer_offset
+    } else {
+        G_NV_STATE.fb_offset
     };
     reg_write32(bar0, 0x00810300, new_base as u32);
     reg_write32(bar0, 0x00810304, 0);

@@ -3,7 +3,8 @@ use core::arch::naked_asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::arch::pic;
-use crate::sched::task::{TASK_READY, TASK_RUNNING, TASK_SYSTEM_PRIORITY, TASK_SYSTEM_TICKS, TASK_USER_TICKS};
+use crate::arch::tss;
+use crate::sched::task::{TASK_MODE_USER, TASK_READY, TASK_RUNNING, TASK_SYSTEM_PRIORITY, TASK_SYSTEM_TICKS, TASK_USER_TICKS};
 
 static G_TICKS: AtomicU64 = AtomicU64::new(0);
 
@@ -78,6 +79,9 @@ pub unsafe fn sched_tick_handler(rsp: u64) -> u64 {
     }
 
     tasks.current_task = next;
+    if tasks.tasks[next as usize].mode == TASK_MODE_USER {
+        tss::tss_set_rsp0(tasks.tasks[next as usize].rsp0);
+    }
     tasks.tasks[next as usize].rsp
 }
 

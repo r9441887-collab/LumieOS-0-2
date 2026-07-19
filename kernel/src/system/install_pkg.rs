@@ -1,26 +1,57 @@
 use core::ffi::c_void;
-use core::mem;
 use core::ptr;
 use crate::fs;
+use crate::mm;
 
-pub const INSTALL_PKG_VER: u32 = 1;
-pub const INSTALL_PKG_MAX_FILES: usize = 64;
-
-#[repr(C)]
-pub struct InstallPkgEntry {
-    pub name: [u8; 64],
-    pub offset: u32,
-    pub size: u32,
-}
+const PKG_MAGIC: u32 = 0x4B47504C;
+const FLAG_DIR: u8 = 1;
+const FLAG_LZ1: u8 = 2;
 
 #[repr(C)]
 pub struct InstallPkg {
     pub present: u8,
-    pub total_files: u32,
-    pub data_offset: u32,
     pub data: *mut u8,
     pub data_size: u32,
-    pub files: [InstallPkgEntry; INSTALL_PKG_MAX_FILES],
+    pub file_count: u32,
+    pub entries_off: u32,
+}
+
+/// LZ1 block decompression.
+/// Custom format: control byte (8 flags MSB), literals (0) or 3-byte references (1: u16 LE offset + u8 length-3).
+unsafe fn lz1_decompress(src: *const u8, src_len: u32, dst: *mut u8, dst_len: u32) -> i32 {
+    let mut ip: usize = 0;
+    let mut op: usize = 0;
+    let src_end = src_len as usize;
+    let dst_end = dst_len as usize;
+
+    while ip < src_end && op < dst_end {
+        let mut ctrl = *src.add(ip) as u32;
+        ip += 1;
+        for _ in 0..8 {
+            if ip >= src_end || op >= dst_end { break; }
+            if ctrl & 0x80 != 0 {
+                if ip + 3 > src_end { return -1; }
+                let offset = *src.add(ip) as usize | ((*src.add(ip + 1) as usize) << 8);
+                let length = *src.add(ip + 2) as usize + 3;
+                ip += 3;
+                if offset == 0 || offset > op { return -1; }
+                if op + length > dst_end { return -1; }
+                let mut match_pos = op - offset;
+                for _ in 0..length {
+                    *dst.add(op) = *dst.add(match_pos);
+                    op += 1;
+                    match_pos += 1;
+                }
+            } else {
+                *dst.add(op) = *src.add(ip);
+                ip += 1;
+                op += 1;
+            }
+            ctrl <<= 1;
+        }
+    }
+
+    if op != dst_len as usize { -2 } else { 0 }
 }
 
 pub unsafe fn install_pkg_open(path: *const u8, pkg: *mut c_void) -> i32 {
@@ -35,52 +66,31 @@ pub unsafe fn install_pkg_open(path: *const u8, pkg: *mut c_void) -> i32 {
     }
     let file_size = fsz as u32;
 
-    let buf = crate::mm::alloc(file_size as u64);
+    let buf = mm::alloc(file_size as u64);
     if buf.is_null() {
         return -1;
     }
     let ret = fs::read_file(path_ptr, buf, file_size);
     if ret < 16 {
-        crate::mm::free(buf);
+        mm::free(buf);
         return -2;
     }
     let len = (if (ret as u32) < file_size { ret } else { file_size as i32 }) as u32;
 
-    let magic = [
-        *buf.add(0), *buf.add(1), *buf.add(2), *buf.add(3),
-        *buf.add(4), *buf.add(5), *buf.add(6), *buf.add(7),
-    ];
-    if &magic != b"LUMIEPKG" {
-        crate::mm::free(buf);
+    let magic = *(buf as *const u32);
+    if magic != PKG_MAGIC {
+        mm::free(buf);
         return -3;
     }
 
-    let version = *(buf.add(8) as *const u32);
-    if version != INSTALL_PKG_VER {
-        crate::mm::free(buf);
-        return -4;
-    }
-
-    let total_files = *(buf.add(12) as *const u32);
-    if total_files > INSTALL_PKG_MAX_FILES as u32 {
-        crate::mm::free(buf);
-        return -5;
-    }
+    // version at +4, file_count at +8, entries_off at +12
+    let entries_off = *(buf.add(12) as *const u32);
+    let file_count = *(buf.add(8) as *const u32);
 
     pkg_ref.data = buf;
     pkg_ref.data_size = len;
-    pkg_ref.total_files = total_files;
-    pkg_ref.data_offset = 16 + total_files * mem::size_of::<InstallPkgEntry>() as u32;
-
-    for i in 0..total_files as usize {
-        let entry_off = 16 + i * mem::size_of::<InstallPkgEntry>();
-        let entry = &mut pkg_ref.files[i];
-        entry.name[..63].copy_from_slice(&core::slice::from_raw_parts(buf.add(entry_off), 63));
-        entry.name[63] = 0;
-        entry.offset = *(buf.add(entry_off + 64) as *const u32);
-        entry.size = *(buf.add(entry_off + 68) as *const u32);
-    }
-
+    pkg_ref.file_count = file_count;
+    pkg_ref.entries_off = entries_off;
     pkg_ref.present = 1;
     0
 }
@@ -88,50 +98,11 @@ pub unsafe fn install_pkg_open(path: *const u8, pkg: *mut c_void) -> i32 {
 pub unsafe fn install_pkg_close(pkg: *mut c_void) -> i32 {
     let pkg_ref = &mut *(pkg as *mut InstallPkg);
     if !pkg_ref.data.is_null() {
-        crate::mm::free(pkg_ref.data);
+        mm::free(pkg_ref.data);
         pkg_ref.data = ptr::null_mut();
         pkg_ref.present = 0;
     }
     0
-}
-
-pub unsafe fn install_pkg_find(pkg: *mut c_void, name: *const u8, size: *mut u32) -> i32 {
-    let pkg_ref = &mut *(pkg as *mut InstallPkg);
-    if pkg_ref.present == 0 {
-        return -1;
-    }
-    let name_str = crate::system::util::lumie_str_from_ptr(name);
-    for i in 0..pkg_ref.total_files as usize {
-        let ename = crate::system::util::lumie_str_from_raw_ptr(&pkg_ref.files[i].name);
-        if ename == name_str {
-            if !size.is_null() {
-                *size = pkg_ref.files[i].size;
-            }
-            return i as i32;
-        }
-    }
-    -1
-}
-
-pub unsafe fn install_pkg_extract(pkg: *mut c_void, file_name: *const u8, buf: *mut u8, max_size: u32) -> i32 {
-    let pkg_ref = &mut *(pkg as *mut InstallPkg);
-    if pkg_ref.present == 0 || pkg_ref.data.is_null() {
-        return -1;
-    }
-    let idx = install_pkg_find(pkg, file_name, ptr::null_mut());
-    if idx < 0 {
-        return -2;
-    }
-    let ent = &pkg_ref.files[idx as usize];
-    if ent.size > max_size {
-        return -3;
-    }
-    let src_off = pkg_ref.data_offset + ent.offset;
-    if (src_off + ent.size) > pkg_ref.data_size {
-        return -4;
-    }
-    ptr::copy_nonoverlapping(pkg_ref.data.add(src_off as usize), buf, ent.size as usize);
-    ent.size as i32
 }
 
 pub unsafe fn install_pkg_extract_all(pkg: *mut c_void, _progress: *mut c_void) -> i32 {
@@ -140,43 +111,45 @@ pub unsafe fn install_pkg_extract_all(pkg: *mut c_void, _progress: *mut c_void) 
         return -1;
     }
 
-    for i in 0..pkg_ref.total_files as usize {
-        let ent = &pkg_ref.files[i];
+    let data = pkg_ref.data;
+    let file_count = pkg_ref.file_count;
+    let entries_off = pkg_ref.entries_off as usize;
 
-        let mut dest_path: [u8; 128] = [0u8; 128];
-        let ename = crate::system::util::lumie_str_from_raw_ptr(&ent.name);
-        if ename == "kernel.lkrn" {
-            dest_path[..15].copy_from_slice(b"/system/kernel.lkrn");
-        } else if ename == "shell.lsh" || ename == "sh" {
-            dest_path[..16].copy_from_slice(b"/system/shell.lsh");
-        } else {
-            dest_path[..9].copy_from_slice(b"/drivers/");
-            let mut pos = 9;
-            let name_len = crate::system::util::lumie_strlen_raw(&ent.name);
-            dest_path[pos..pos + name_len].copy_from_slice(&ent.name[..name_len]);
-            pos += name_len;
-            let ext = b".ldrv";
-            dest_path[pos..pos + 5].copy_from_slice(ext);
-            pos += 5;
-            dest_path[pos] = 0;
-        }
+    for i in 0..file_count as usize {
+        let entry = data.add(entries_off + i * 32);
+        let path_off = *(entry as *const u32);
+        let data_off = *(entry.add(4) as *const u32);
+        let store_sz = *(entry.add(8) as *const u32);
+        let flags = *(entry.add(12) as *const u8);
 
-        let src_off = pkg_ref.data_offset + ent.offset;
-        if (src_off + ent.size) > pkg_ref.data_size {
+        let path = data.add(path_off as usize);
+
+        if flags & FLAG_DIR != 0 {
             continue;
         }
 
-        if !fs::exists(b"/system\0" as *const u8) {
-            fs::mkdir(b"/system\0" as *const u8);
+        // Map LPKG path to kernel destination path
+        let mut dest_path: [u8; 128] = [0u8; 128];
+        let path_slice = core::slice::from_raw_parts(path, 128);
+        let path_len = crate::system::util::lumie_strlen_raw(path_slice);
+        if path_len > 127 { continue; }
+        ptr::copy_nonoverlapping(path, dest_path.as_mut_ptr(), path_len);
+        dest_path[path_len] = 0;
+
+        // Write file (decompress if needed)
+        if flags & FLAG_LZ1 != 0 {
+            let orig_sz = *(entry.add(16) as *const u32);
+            let tmp = mm::alloc(orig_sz as u64);
+            if tmp.is_null() { return -1; }
+            if lz1_decompress(data.add(data_off as usize), store_sz, tmp, orig_sz) != 0 {
+                mm::free(tmp);
+                return -2;
+            }
+            fs::write_file(dest_path.as_ptr(), tmp, orig_sz);
+            mm::free(tmp);
+        } else {
+            fs::write_file(dest_path.as_ptr(), data.add(data_off as usize), store_sz);
         }
-        if !fs::exists(b"/drivers\0" as *const u8) {
-            fs::mkdir(b"/drivers\0" as *const u8);
-        }
-        fs::write_file(
-            dest_path.as_ptr() as *const u8,
-            pkg_ref.data.add(src_off as usize),
-            ent.size,
-        );
     }
 
     0

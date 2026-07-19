@@ -5,7 +5,6 @@ use crate::uefi::guid::EFI_GOP_GUID;
 use crate::uefi::tables::EfiSystemTable;
 use crate::uefi::protocols::gop::{EfiGopProtocol, EfiGopModeInfo};
 use super::fb::FbInfo;
-use super::nv_gpu::{self, G_NV_GPU_API};
 
 pub static mut GOP_PROTO: Option<&'static EfiGopProtocol> = None;
 
@@ -140,7 +139,7 @@ pub unsafe fn fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
     };
 
     if NV_ACTIVE != 0 {
-        nv_gpu::nv_gpu_fill_rect(x, y, w, h, color);
+        crate::drivers::nv_gpu::nv_gpu_fill_rect(x, y, w, h, color);
         return;
     }
 
@@ -159,12 +158,16 @@ pub unsafe fn draw_char(x: u32, y: u32, fg: u32, bg: u32, c: u8) {
     if x + 8 > FB_INFO.width || y + 16 > FB_INFO.height {
         return;
     }
-    let base = FB_INFO.base as *mut u32;
+    let base_ptr = if NV_ACTIVE != 0 {
+        crate::gfx::context::gfx_ctx().fb_base as *mut u32
+    } else {
+        FB_INFO.base as *mut u32
+    };
     let pitch_px = FB_INFO.pitch / 4;
     let idx = (c - 32) as usize;
     for row in 0..16 {
         let bits = super::font::FONT_8X16[idx][row];
-        let line = base.offset(((y as u64 + row as u64) * pitch_px as u64 + x as u64) as isize);
+        let line = base_ptr.offset(((y as u64 + row as u64) * pitch_px as u64 + x as u64) as isize);
         if bits == 0xFF {
             for col in 0..8 {
                 ptr::write_volatile(line.offset(col as isize), fg);
@@ -202,19 +205,13 @@ pub fn get_height() -> u32 {
 }
 
 pub unsafe fn nv_init() -> i32 {
-    if let Some(api) = G_NV_GPU_API {
-        if let Some(is_active) = api.is_active {
-            if is_active() != 0 {
-                if let Some(set_fb) = api.set_fb {
-                    set_fb(FB_INFO.base, FB_INFO.width, FB_INFO.height, FB_INFO.pitch);
-                }
-                NV_ACTIVE = 1;
-                return 1;
-            }
-        }
-    }
-    let ret = nv_gpu::nv_gpu_init(FB_INFO.base, FB_INFO.width, FB_INFO.height, FB_INFO.pitch);
+    let ret = crate::drivers::nv_gpu::nv_gpu_init_from_fb(
+        FB_INFO.base, FB_INFO.width, FB_INFO.height, FB_INFO.pitch,
+    );
     NV_ACTIVE = ret;
+    if ret != 0 {
+        crate::gfx::context::gfx_init();
+    }
     ret
 }
 
@@ -223,11 +220,5 @@ pub fn nv_active() -> bool {
 }
 
 pub unsafe fn nv_fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
-    if let Some(api) = G_NV_GPU_API {
-        if let Some(fill_rect_fn) = api.fill_rect {
-            fill_rect_fn(x, y, w, h, color);
-            return;
-        }
-    }
-    nv_gpu::nv_gpu_fill_rect(x, y, w, h, color);
+    crate::drivers::nv_gpu::nv_gpu_fill_rect(x, y, w, h, color);
 }

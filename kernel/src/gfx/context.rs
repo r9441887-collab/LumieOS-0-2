@@ -1,4 +1,4 @@
-use crate::console::nv_gpu::G_NV_STATE;
+use crate::drivers::nv_gpu::G_NV_STATE;
 use crate::console::gop;
 
 pub struct GfxCtx {
@@ -29,10 +29,14 @@ pub unsafe fn gfx_init() {
     CTX.gpu_active = gop::nv_active();
 
     if CTX.gpu_active {
-        let base = if G_NV_STATE.front_buf != 0 {
-            G_NV_STATE.fb_offset
+        let base = if G_NV_STATE.double_buffer != 0 {
+            if G_NV_STATE.front_buf != 0 {
+                G_NV_STATE.backbuffer_offset
+            } else {
+                G_NV_STATE.fb_offset
+            }
         } else {
-            G_NV_STATE.backbuffer_offset
+            G_NV_STATE.fb_offset
         };
         CTX.fb_base = G_NV_STATE.bar1_base + base;
     }

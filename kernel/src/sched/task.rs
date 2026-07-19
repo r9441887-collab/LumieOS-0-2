@@ -1,4 +1,6 @@
 pub const MAX_TASKS: usize = 32;
+pub const TASK_MODE_KERNEL: u8 = 0;
+pub const TASK_MODE_USER: u8 = 1;
 pub const TASK_USER_PRIORITY: u8 = 0;
 pub const TASK_SYSTEM_PRIORITY: u8 = 1;
 pub const TASK_USER_TICKS: i32 = 1;
@@ -20,6 +22,8 @@ pub struct Task {
     pub priority: u8,
     pub state: i32,
     pub ticks_left: i32,
+    pub mode: u8,
+    pub user_rsp: u64,
 }
 
 impl Task {
@@ -33,6 +37,8 @@ impl Task {
             priority: 0,
             state: 0,
             ticks_left: 0,
+            mode: TASK_MODE_KERNEL,
+            user_rsp: 0,
         }
     }
 }
