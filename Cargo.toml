@@ -5,8 +5,15 @@ members = [
     "shell",
     "editor",
     "desktop",
+    "drv_kbd",
+    "drv_mouse",
+    "drv_fs",
     "libs/lumie_std",
     "libs/lumie_math",
+    "sdk/lumie_sdk",
+    "sdk/examples/hello",
+    "sdk/examples/sysinfo",
+    "sdk/examples/gpu_demo",
 ]
 resolver = "2"
 
