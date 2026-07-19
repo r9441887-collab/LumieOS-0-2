@@ -1,0 +1,7 @@
+select disk 2
+clean
+convert gpt
+create partition efi size=3800
+format quick fs=fat32 label=LUMIEOS
+assign letter=F
+exit

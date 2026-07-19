@@ -1,0 +1,8 @@
+echo === volumes before ===
+mountvol
+echo === assign ===
+mountvol F: \\?\Volume{fa5f66c5-8286-11f1-b465-00e04f176552}\
+echo === volumes after ===
+mountvol
+echo === dir ===
+dir F:\
