@@ -1,0 +1,83 @@
+/* 
+ * LumieOS SDK - Example: Hello World
+ * 
+ * Build: lumiec hello.lc
+ * Run:   sysload hello.sys
+ */
+
+#include "lumie_os_all.h"
+
+int lumiec_main(void) {
+    /* Clear screen with blue background */
+    term_clear(COLOR_BLUE);
+    
+    /* Set text color to white */
+    term_set_fg(COLOR_WHITE);
+    
+    /* Write welcome message */
+    term_write("=== LumieOS SDK Demo ===");
+    term_writeln("");
+    term_writeln("");
+    
+    /* Show memory info */
+    term_set_fg(COLOR_LCYAN);
+    term_write("Memory test: ");
+    term_set_fg(COLOR_YELLOW);
+    
+    /* Allocate and free memory */
+    void *ptr = kmalloc(1024);
+    if (ptr) {
+        term_write("kmalloc(1024) = OK");
+        term_writeln("");
+        memset(ptr, 0, 1024);
+        term_write("memset: OK");
+        term_writeln("");
+        kfree(ptr);
+        term_write("kfree: OK");
+        term_writeln("");
+    } else {
+        term_write("kmalloc failed!");
+        term_writeln("");
+    }
+    
+    term_writeln("");
+    
+    /* Draw some graphics */
+    term_set_fg(COLOR_LGREEN);
+    term_write("Drawing graphics...");
+    term_writeln("");
+    
+    /* Draw a filled rectangle */
+    draw_rect(50, 200, 200, 100, CLR_RED);
+    draw_rect(50, 320, 200, 100, CLR_GREEN);
+    draw_rect(50, 440, 200, 100, CLR_BLUE);
+    
+    /* Draw outlines */
+    draw_rect_outline(300, 200, 200, 100, CLR_YELLOW);
+    draw_rect_outline(300, 320, 200, 100, CLR_CYAN);
+    draw_rect_outline(300, 440, 200, 100, CLR_MAGENTA);
+    
+    /* Draw some pixels */
+    i64 x, y;
+    for (x = 0; x < 100; x++) {
+        for (y = 0; y < 100; y++) {
+            draw_pixel(550 + x, 200 + y, make_color((u8)x, (u8)y, 128));
+        }
+    }
+    
+    /* Draw circle */
+    draw_circle(700, 400, 80, CLR_ORANGE);
+    
+    term_writeln("");
+    term_set_fg(COLOR_LRED);
+    term_write("Press any key to exit...");
+    
+    /* Wait for key */
+    input_waitkey();
+    
+    term_clear(COLOR_BLACK);
+    term_set_fg(COLOR_WHITE);
+    term_writeln("Goodbye!");
+    
+    return 0;
+}

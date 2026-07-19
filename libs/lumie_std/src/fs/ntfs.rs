@@ -191,6 +191,9 @@ unsafe fn compute_record_size(clusters_per: i8, bpc: u32) -> u32 {
 }
 
 unsafe fn read_sectors(lba: u64, count: u32, buffer: *mut u8) -> i32 {
+    if lba > u32::MAX as u64 {
+        return -1;
+    }
     let disk = (*ntfs()).disk_io;
     if let Some(cb) = disk.read_cb {
         return cb(lba as u32, count, buffer);
@@ -1166,6 +1169,9 @@ unsafe fn allocate_clusters(count: u32) -> Option<u64> {
 }
 
 unsafe fn write_sectors(lba: u64, count: u32, buffer: *const u8) -> i32 {
+    if lba > u32::MAX as u64 {
+        return -1;
+    }
     let ntfs = &(*ntfs());
     if let Some(cb) = ntfs.disk_io.write_cb {
         return cb(lba as u32, count, buffer as *mut u8);
@@ -1489,8 +1495,78 @@ pub unsafe fn mkdir(path: &str) -> i32 {
     0
 }
 
-pub unsafe fn delete(_path: &str) -> i32 {
-    -1
+pub unsafe fn delete(path: &str) -> i32 {
+    let mft_ref = resolve_path(path);
+    if mft_ref == u64::MAX {
+        return -1;
+    }
+    if mft_ref <= 5 {
+        return -1;
+    }
+    let rsize = record_size();
+    let mut rec = [0u8; 4096];
+    let rs = rsize.min(4096);
+    if mft_read_record(mft_ref, rec.as_mut_ptr()) != 0 {
+        return -1;
+    }
+    let header = rec.as_mut_ptr() as *mut MftRecordHeader;
+    let flags = read_packed!((*header).flags);
+    let new_flags = flags & !MFT_RECORD_IN_USE;
+    ptr::write_unaligned(core::ptr::addr_of_mut!((*header).flags), new_flags);
+    if write_mft_record(mft_ref, rec.as_ptr()) != 0 {
+        return -1;
+    }
+    let mut parent_rec = [0u8; 4096];
+    let fn_attr = attr_find(rec.as_ptr(), rs, ATTR_FILE_NAME, 0);
+    let parent_ref = if !fn_attr.is_null() {
+        let (val, _vl) = resident_value(fn_attr);
+        ptr::read_unaligned(val as *const u64) & 0x0000_FFFF_FFFF_FFFF
+    } else {
+        MFT_ENTRY_ROOT
+    };
+    if mft_read_record(parent_ref, parent_rec.as_mut_ptr()) != 0 {
+        return 0;
+    }
+    let target_name: &[u8] = path.trim_start_matches('/').trim_start_matches('\\')
+        .rsplit_once(|c| c == '/' || c == '\\')
+        .map(|(_, n)| n.as_bytes())
+        .unwrap_or(path.as_bytes());
+    let root_attr = attr_find(parent_rec.as_ptr(), rs, ATTR_INDEX_ROOT, 0);
+    if root_attr.is_null() {
+        return 0;
+    }
+    let (val, _vl) = resident_value(root_attr);
+    let index_root = val as *const IndexRoot;
+    let entries_off = read_packed!((*index_root).entries_off) as usize;
+    let entries_size = read_packed!((*index_root).entries_size) as usize;
+    let mut pos = val.add(entries_off);
+    let end = val.add(16 + entries_size);
+    while (pos as usize) < (end as usize) {
+        let hdr = pos as *const IndexEntryHeader;
+        let entry_len = read_packed!((*hdr).entry_len) as usize;
+        let flags_e = read_packed!((*hdr).flags);
+        if entry_len == 0 {
+            break;
+        }
+        if (flags_e & INDEX_ENTRY_LAST) != 0 {
+            break;
+        }
+        let mut name_buf = [0u8; 256];
+        let name_len = index_entry_name(pos, &mut name_buf);
+        if name_len > 0 {
+            let en = core::str::from_utf8(&name_buf[..name_len as usize]);
+            let tn = core::str::from_utf8(target_name);
+            if let (Ok(e), Ok(t)) = (en, tn) {
+                if e.eq_ignore_ascii_case(t) {
+                    ptr::write_bytes(pos as *mut u8, 0, entry_len);
+                    apply_fixup(parent_rec.as_mut_ptr(), rsize);
+                    return write_mft_record(parent_ref, parent_rec.as_ptr());
+                }
+            }
+        }
+        pos = pos.add(entry_len);
+    }
+    0
 }
 
 

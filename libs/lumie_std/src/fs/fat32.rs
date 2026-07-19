@@ -553,8 +553,8 @@ pub unsafe fn format_at(start_lba: u64, total_sectors: u64) -> i32 {
         sectors_per_fat_16: 0,
         sectors_per_track: 0x3F,
         num_heads: 0xFF,
-        hidden_sectors: 0,
-        total_sectors_32: total_sectors as u32,
+        hidden_sectors: start_lba as u32,
+        total_sectors_32: if total_sectors > 0xFFFFFFFF { 0xFFFFFFFF } else { total_sectors as u32 },
         sectors_per_fat_32: 0,
         ext_flags: 0,
         fs_version: 0,
@@ -633,7 +633,22 @@ pub unsafe fn format_at(start_lba: u64, total_sectors: u64) -> i32 {
     }
     free_c(fat_sector);
     let root_sector = 32 + num_fats * fat32_calc_sectors_per_fat;
-    if write_sectors(start_lba as u32 + root_sector, 1, zero_buf) != 0 {
+    let root_sectors_needed = bpb_src.sectors_per_cluster as u32;
+    let mut rs: u32 = 0;
+    while rs < root_sectors_needed {
+        if write_sectors(start_lba as u32 + root_sector + rs, 1, zero_buf) != 0 {
+            free_c(zero_buf);
+            return -1;
+        }
+        rs += 1;
+    }
+    let mut fsinfo: [u8; 512] = [0; 512];
+    ptr::write_bytes(fsinfo.as_mut_ptr(), 0, 512);
+    ptr::write_unaligned(fsinfo.as_mut_ptr().add(0) as *mut u32, 0x52526141);
+    ptr::write_unaligned(fsinfo.as_mut_ptr().add(484) as *mut u32, 0x72724161);
+    ptr::write_unaligned(fsinfo.as_mut_ptr().add(488) as *mut u32, 0xFFFFFFFF);
+    ptr::write_unaligned(fsinfo.as_mut_ptr().add(492) as *mut u32, 0xFFFFFFFF);
+    if write_sectors(start_lba as u32 + 1, 1, fsinfo.as_mut_ptr()) != 0 {
         free_c(zero_buf);
         return -1;
     }
@@ -787,10 +802,19 @@ pub unsafe fn write_file(path: *const u8, data: *const u8, size: u32) -> i32 {
         let ech = ptr::read_unaligned(core::ptr::addr_of!(entry_buf.cluster_high)) as u32;
         let mut old_cluster = ecl | (ech << 16);
         if old_cluster >= 2 {
+            let zero_buf = alloc_c(cluster_size as usize);
             while old_cluster >= 2 && old_cluster < FAT_END_OF_CHAIN {
                 let next = fat_read_fat_entry(old_cluster);
+                if !zero_buf.is_null() {
+                    ptr::write_bytes(zero_buf, 0, cluster_size as usize);
+                    let sector = fat_cluster_to_sector(old_cluster);
+                    write_sectors(sector, bpb.sectors_per_cluster as u32, zero_buf);
+                }
                 fat_write_fat_entry(old_cluster, 0);
                 old_cluster = next;
+            }
+            if !zero_buf.is_null() {
+                free_c(zero_buf);
             }
         }
     }

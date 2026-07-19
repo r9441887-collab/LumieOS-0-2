@@ -8,8 +8,83 @@ fn str_to_fixed<'a>(s: &str, buf: &'a mut [u8]) -> &'a str {
     core::str::from_utf8(&buf[..len]).unwrap_or("")
 }
 
+pub fn cmd_cp(sh: &Shell, src: Option<&[u8]>, dst: Option<&[u8]>) {
+    let src = match src {
+        Some(s) => core::str::from_utf8(s).unwrap_or(""),
+        None => {
+            sh.svc.term_set_fg(12);
+            sh.svc.term_writeln("Usage: cp <source> <destination>");
+            sh.svc.term_set_fg(15);
+            return;
+        }
+    };
+    let dst = match dst {
+        Some(d) => core::str::from_utf8(d).unwrap_or(""),
+        None => {
+            sh.svc.term_set_fg(12);
+            sh.svc.term_writeln("Usage: cp <source> <destination>");
+            sh.svc.term_set_fg(15);
+            return;
+        }
+    };
+
+    let mut src_resolved = [0u8; 256];
+    sh.resolve_path(src, &mut src_resolved);
+    let src_str = core::str::from_utf8(&src_resolved).unwrap_or("").trim_end_matches('\0');
+
+    let mut dst_resolved = [0u8; 256];
+    sh.resolve_path(dst, &mut dst_resolved);
+    let dst_str = core::str::from_utf8(&dst_resolved).unwrap_or("").trim_end_matches('\0');
+
+    if sh.svc.fs_copy(src_str, dst_str) == 0 {
+        sh.svc.term_set_fg(10);
+        sh.svc.term_writeln("File copied.");
+    } else {
+        sh.svc.term_set_fg(12);
+        sh.svc.term_writeln("cp: failed to copy file.");
+    }
+    sh.svc.term_set_fg(15);
+}
+
+pub fn cmd_mv(sh: &Shell, src: Option<&[u8]>, dst: Option<&[u8]>) {
+    let src = match src {
+        Some(s) => core::str::from_utf8(s).unwrap_or(""),
+        None => {
+            sh.svc.term_set_fg(12);
+            sh.svc.term_writeln("Usage: mv <source> <destination>");
+            sh.svc.term_set_fg(15);
+            return;
+        }
+    };
+    let dst = match dst {
+        Some(d) => core::str::from_utf8(d).unwrap_or(""),
+        None => {
+            sh.svc.term_set_fg(12);
+            sh.svc.term_writeln("Usage: mv <source> <destination>");
+            sh.svc.term_set_fg(15);
+            return;
+        }
+    };
+
+    let mut src_resolved = [0u8; 256];
+    sh.resolve_path(src, &mut src_resolved);
+    let src_str = core::str::from_utf8(&src_resolved).unwrap_or("").trim_end_matches('\0');
+
+    let mut dst_resolved = [0u8; 256];
+    sh.resolve_path(dst, &mut dst_resolved);
+    let dst_str = core::str::from_utf8(&dst_resolved).unwrap_or("").trim_end_matches('\0');
+
+    if sh.svc.fs_rename(src_str, dst_str) == 0 {
+        sh.svc.term_set_fg(10);
+        sh.svc.term_writeln("File moved.");
+    } else {
+        sh.svc.term_set_fg(12);
+        sh.svc.term_writeln("mv: failed to move file.");
+    }
+    sh.svc.term_set_fg(15);
+}
+
 pub fn cmd_ls(sh: &Shell, path: Option<&[u8]>) {
-    let _entries_buf = [[0u8; 256]; 256];
     let mut entries: [LumieDirEnt; 256] = unsafe { core::mem::zeroed() };
     let mut resolved = [0u8; 256];
     let mut dir_buf = [0u8; 256];
@@ -99,18 +174,10 @@ pub fn cmd_cd(sh: &mut Shell, path: Option<&[u8]>) {
             }
             let clean = &resolved_str[..rlen];
 
-            if !sh.svc.fs_exists(clean) {
-                sh.svc.term_set_fg(12);
-                sh.svc.term_write("cd: directory not found: ");
-                sh.svc.term_writeln(p_str);
-                sh.svc.term_set_fg(15);
-                return;
-            }
-
             let mut check: [LumieDirEnt; 1] = unsafe { core::mem::zeroed() };
             if sh.svc.fs_list_dir(clean, &mut check) < 0 {
                 sh.svc.term_set_fg(12);
-                sh.svc.term_write("cd: not a directory: ");
+                sh.svc.term_write("cd: not found or not a directory: ");
                 sh.svc.term_writeln(p_str);
                 sh.svc.term_set_fg(15);
                 return;

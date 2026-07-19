@@ -6,6 +6,7 @@ mod filesystem;
 mod commands;
 mod login;
 mod prompt;
+mod per;
 
 extern crate lumie_std;
 
@@ -36,6 +37,8 @@ pub trait ShellServices {
     fn fs_read_file(&self, path: &str, buf: &mut [u8]) -> i32;
     fn fs_write_file(&self, path: &str, data: &[u8]) -> i32;
     fn fs_get_file_size(&self, path: &str) -> i32;
+    fn fs_rename(&self, old_path: &str, new_path: &str) -> i32;
+    fn fs_copy(&self, src_path: &str, dst_path: &str) -> i32;
     fn fs_format(&self, total_sectors: u64);
     fn fs_set_drive(&self, drive_letter: char);
     fn fs_get_current_drive(&self) -> char;
@@ -548,6 +551,8 @@ impl<'a> Shell<'a> {
                 b"rm" | b"del" => filesystem::cmd_rm(self, arg!(1)),
                 b"rmdir" => filesystem::cmd_rmdir(self, arg!(1)),
                 b"mkdir" => filesystem::cmd_mkdir(self, arg!(1)),
+                b"cp" => filesystem::cmd_cp(self, arg!(1), arg!(2)),
+                b"mv" | b"ren" => filesystem::cmd_mv(self, arg!(1), arg!(2)),
                 b"echo" => builtins::cmd_echo(self, arg!(1)),
                 b"info" => builtins::cmd_info(self),
                 b"ver" => builtins::cmd_ver(self),
@@ -615,6 +620,7 @@ impl<'a> Shell<'a> {
                         self.svc.net_renet_download(arg_str!(1));
                     }
                 }
+                b"per" => per::cmd_per(self, arg!(1), arg!(2)),
                 _ => {
                     let cmd_str = core::str::from_utf8(cmd0).unwrap_or("");
                     let mut fpath = [0u8; 256];

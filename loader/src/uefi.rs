@@ -135,8 +135,39 @@ pub struct EfiSystemTable {
     pub configuration_table: *mut core::ffi::c_void,
 }
 
+#[repr(C)]
 #[allow(dead_code)]
-pub struct EfiLoadedImageProtocol;
+pub struct EfiLoadedImageProtocol {
+    pub revision: u32,
+    pub _pad0: u32,
+    pub parent_handle: efi_handle,
+    pub system_table: *mut EfiSystemTable,
+    pub file_path: *mut EfiDevicePathProtocol,
+    pub _reserved: *mut core::ffi::c_void,
+    pub load_options_size: u32,
+    pub _pad1: u32,
+    pub load_options: *mut core::ffi::c_void,
+    pub image_base: *mut core::ffi::c_void,
+    pub image_size: u64,
+    pub image_code_type: u32,
+    pub data_type: u32,
+    pub unload: *mut core::ffi::c_void,
+    pub entry_point: *mut core::ffi::c_void,
+}
+
+#[repr(C)]
+#[allow(dead_code)]
+pub struct EfiDevicePathProtocol {
+    pub r#type: u8,
+    pub subtype: u8,
+    pub length: [u8; 2],
+}
+
+pub type EfiBsLocateDevicePath = Option<unsafe extern "efiapi" fn(
+    *const EfiGuid,
+    *mut *mut EfiDevicePathProtocol,
+    *mut efi_handle,
+) -> efi_status>;
 
 pub const EFI_LOADED_IMAGE_PROTOCOL_GUID: EfiGuid = EfiGuid {
     data1: 0x5B1B4A42,
@@ -211,7 +242,7 @@ pub struct EfiBlockIoProtocol {
     pub flush_blocks: Option<unsafe extern "efiapi" fn(*mut core::ffi::c_void) -> efi_status>,
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 pub struct EfiBlockIoMedia {
     pub media_id: u32,
     pub removable_media: boolean,

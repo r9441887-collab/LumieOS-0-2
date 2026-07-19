@@ -3,8 +3,105 @@
 extern crate lumie_std;
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    unsafe { bsod_handler(info); }
     loop {}
+}
+
+unsafe fn bsod_handler(info: &core::panic::PanicInfo) {
+    let bg = crate::display::ld_make_color(0x00, 0x00, 0x80);
+    let white = crate::display::ld_make_color(0xFF, 0xFF, 0xFF);
+    let yellow = crate::display::ld_make_color(0xFF, 0xFF, 0x00);
+    let cyan = crate::display::ld_make_color(0x00, 0xFF, 0xFF);
+    let red = crate::display::ld_make_color(0xFF, 0x00, 0x00);
+
+    let fb = crate::gop_get_fb();
+    if !fb.is_null() && (*fb).base != 0 {
+        let w = (*fb).width;
+        let h = (*fb).height;
+
+        crate::gop_fill_rect(0, 0, w, h, bg);
+
+        crate::gop_draw_string(20, 20, white, bg, b"*** LUMIEOS PANIC ***\0" as *const u8);
+        crate::gop_draw_string(20, 44, red, bg, b"A fatal error has occurred.\0" as *const u8);
+        crate::gop_draw_string(20, 64, yellow, bg, b"The system has been halted.\0" as *const u8);
+
+        let mut y = 100u32;
+
+        /* Location */
+        if let Some(loc) = info.location() {
+            let mut buf: [u8; 256] = [0u8; 256];
+            let mut bp = 0;
+            let pre = b"Location: \0";
+            for &c in pre { if bp < 255 { buf[bp] = c; bp += 1; } }
+            for &c in loc.file().as_bytes() { if bp < 255 { buf[bp] = c; bp += 1; } }
+            if bp < 255 { buf[bp] = b':'; bp += 1; }
+            let mut ln: [u8; 16] = [0u8; 16];
+            lumie_std::format::lumie_itoa(loc.line() as i64, ln.as_mut_ptr(), 10);
+            for &c in ln.iter() { if c == 0 { break; } if bp < 255 { buf[bp] = c; bp += 1; } }
+            if bp < 255 { buf[bp] = b':'; bp += 1; }
+            let mut col: [u8; 16] = [0u8; 16];
+            lumie_std::format::lumie_itoa(loc.column() as i64, col.as_mut_ptr(), 10);
+            for &c in col.iter() { if c == 0 { break; } if bp < 255 { buf[bp] = c; bp += 1; } }
+            if bp < 255 { buf[bp] = 0; }
+            crate::gop_draw_string(20, y, cyan, bg, buf.as_ptr());
+            y += 20;
+        }
+
+        /* Display panic message */
+        {
+            let mut msg_buf: [u8; 256] = [0u8; 256];
+            let mut mp = 0;
+            if let Some(s) = info.message().as_str() {
+                for &c in s.as_bytes() { if mp < 255 { msg_buf[mp] = c; mp += 1; } }
+            } else {
+                let fallback = b"<unformatted panic message>\0";
+                for &c in fallback { if mp < 255 { msg_buf[mp] = c; mp += 1; } }
+            }
+            if mp < 255 { msg_buf[mp] = 0; }
+            crate::gop_draw_string(20, y, white, bg, b"Error: \0" as *const u8);
+            y += 20;
+            crate::gop_draw_string(20, y, white, bg, msg_buf.as_ptr());
+            y += 24;
+        }
+
+        let hint = b"Check /crash.log on the boot partition for details.\0";
+        crate::gop_draw_string(20, y, yellow, bg, hint as *const u8);
+        y += 24;
+        crate::gop_draw_string(20, y, white, bg, b"Press any key to reboot...\0" as *const u8);
+
+        /* Write crash log to FAT32 if available */
+        let mut log: [u8; 1024] = [0u8; 1024];
+        let mut lp = 0;
+        let hd = b"LumieOS Crash Log\r\n==================\r\n\0";
+        for &c in hd { if lp < 1023 { log[lp] = c; lp += 1; } }
+        if let Some(loc) = info.location() {
+            let f = b"File: \0";
+            for &c in f { if lp < 1023 { log[lp] = c; lp += 1; } }
+            for &c in loc.file().as_bytes() { if lp < 1023 { log[lp] = c; lp += 1; } }
+            if lp < 1023 { log[lp] = b'\r'; lp += 1; }
+            if lp < 1023 { log[lp] = b'\n'; lp += 1; }
+            let l = b"Line: \0";
+            for &c in l { if lp < 1023 { log[lp] = c; lp += 1; } }
+            let mut ls: [u8; 16] = [0u8; 16];
+            lumie_std::format::lumie_itoa(loc.line() as i64, ls.as_mut_ptr(), 10);
+            for &c in ls.iter() { if c == 0 { break; } if lp < 1023 { log[lp] = c; lp += 1; } }
+            if lp < 1023 { log[lp] = b'\r'; lp += 1; }
+            if lp < 1023 { log[lp] = b'\n'; lp += 1; }
+        }
+        let m = b"Message: \0";
+        for &c in m { if lp < 1023 { log[lp] = c; lp += 1; } }
+        if let Some(s) = info.message().as_str() {
+            for &c in s.as_bytes() { if lp < 1023 { log[lp] = c; lp += 1; } }
+        }
+        if lp < 1023 { log[lp] = 0; }
+        crate::fat_write_file(b"/crash.log\0" as *const u8, log.as_ptr() as *const core::ffi::c_void, lp as u32);
+    }
+
+    /* Wait for key press */
+    if !crate::input::get_ld_st().is_null() {
+        crate::input::loader_getchar();
+    }
 }
 
 pub mod uefi;
@@ -112,6 +209,8 @@ pub extern "efiapi" fn lumie_loader_start(
         return;
     }
 
+    unsafe { lumie_set_image_handle(image_handle); }
+
     /* Init subsystems */
     unsafe {
         mm_init(st.boot_services, image_handle);
@@ -127,43 +226,33 @@ pub extern "efiapi" fn lumie_loader_start(
         kbd_init(system_table);
         term_init();
         fat_set_bs(st.boot_services, image_handle, system_table);
-        fat_init();
     }
 
-    /* Save boot device handle */
+    /* Save boot device handle via LocateDevicePath */
     let li_guid = &EFI_LOADED_IMAGE_PROTOCOL_GUID as *const EfiGuid;
     unsafe {
         let bs = st.boot_services;
         if !bs.is_null() {
             if let Some(hp) = (*bs).handle_protocol {
-                let mut li: *mut core::ffi::c_void = ptr::null_mut();
-                let err = hp(image_handle, li_guid, &mut li);
+                let mut li: *mut EfiLoadedImageProtocol = ptr::null_mut();
+                let err = hp(image_handle, li_guid, &mut li as *mut *mut EfiLoadedImageProtocol as *mut *mut c_void);
                 if err == 0 && !li.is_null() {
-                    let li_bytes = li as *mut u8;
-                    let dh_ptr = li_bytes.add(24) as *mut efi_handle;
-                    G_LOADER_BOOT_DEVICE = *dh_ptr;
-                }
-            }
-        }
-    }
-
-    unsafe { mouse_init(system_table); }
-
-    /* Cache kernel image */
-    unsafe {
-        if !st.boot_services.is_null() {
-            if let Some(hp) = (*st.boot_services).handle_protocol {
-                let mut li: *mut core::ffi::c_void = ptr::null_mut();
-                let err2 = hp(image_handle, li_guid, &mut li);
-                if err2 == 0 && !li.is_null() {
-                    let li_bytes = li as *mut u8;
-                    let base_ptr = li_bytes.add(40) as *mut *const c_void;  // image_base
-                    let size_ptr = li_bytes.add(48) as *mut u64;            // image_size
-                    let ib = *base_ptr;
-                    let isz = *size_ptr;
-                    if !ib.is_null() && isz > 0 {
-                        lumie_cache_kernel_image(ib, isz as u32);
+                    let file_path = (*li).file_path;
+                    if !file_path.is_null() {
+                        let mut fp: *mut EfiDevicePathProtocol = file_path;
+                        let dp_guid = &EFI_DEVICE_PATH_PROTOCOL_GUID as *const EfiGuid;
+                        let locate_dp: Option<unsafe extern "efiapi" fn(
+                            *const EfiGuid, *mut *mut EfiDevicePathProtocol, *mut efi_handle,
+                        ) -> efi_status> = core::mem::transmute((*bs).locate_device_path);
+                        if let Some(ldp) = locate_dp {
+                            let mut dev_handle: efi_handle = ptr::null_mut();
+                            let st2 = ldp(dp_guid, &mut fp, &mut dev_handle);
+                            if st2 == 0 && !dev_handle.is_null() {
+                                G_LOADER_BOOT_DEVICE = dev_handle;
+                            }
+                        }
                     }
+                    lumie_cache_kernel_image((*li).image_base, (*li).image_size as u32);
                 }
             }
         }
@@ -178,59 +267,60 @@ pub extern "efiapi" fn lumie_loader_start(
 
     unsafe { lumie_load_shell_module(); }
 
-    /* Not installed → shell */
+    /* Initialize FAT on boot device BEFORE checking if OS is installed.
+     * Without this, fat_exists() always returns false (FAT uninitialized)
+     * and an installed system can never boot. */
+    unsafe {
+        if !G_LOADER_BOOT_DEVICE.is_null() {
+            fat_set_device(G_LOADER_BOOT_DEVICE);
+        }
+    }
+
+    /* Not installed → install; Installed → boot */
     if !boot::lumieos_installed() {
-        /* Pre-load install.pkg into RAM disk */
-        unsafe { if !G_LOADER_BOOT_DEVICE.is_null() {
-                fat_set_device(G_LOADER_BOOT_DEVICE);
-                let pkg_size = fat_get_file_size(b"install.pkg\0" as *const u8);
-                if pkg_size > 0 {
-                    let sz = pkg_size as u32;
-                    let mut buf: *mut u8 = ptr::null_mut();
-                    if let Some(ap) = (*st.boot_services).allocate_pool {
-                        let err3 = ap(EFI_BOOT_SERVICES_DATA, sz as u64, &mut buf as *mut *mut u8 as *mut *mut c_void);
-                        if err3 == 0 && !buf.is_null() {
-                            let r = fat_read_file(
-                                b"install.pkg\0" as *const u8, buf as *mut c_void, sz,
-                            );
-                            if r == sz as i32 {
-                                ramdisk_init();
-                                ramdisk_format_fat32();
-                                fat_set_drive(
-                                    ramdisk_read_sector_cb as *const () as usize,
-                                    ramdisk_write_sector_cb as *const () as usize,
-                                    ptr::null_mut(),
-                                );
-                                fat_reinit();
-                                fat_write_file(
-                                    b"install.pkg\0" as *const u8, buf as *const c_void, sz,
-                                );
-                            }
-                            if let Some(fp) = (*st.boot_services).free_pool {
-                                fp(buf as *mut c_void);
-                            }
+        /* If boot device was not set by LocateDevicePath, try fallback */
+        unsafe {
+            if G_LOADER_BOOT_DEVICE.is_null() {
+                term_write(b"[boot] WARNING: boot device handle is NULL, searching...\0" as *const u8);
+                term_newline();
+                let bs_ref = &*st.boot_services;
+                let mut fallback_devs: [devices::LoaderBlockDevice; 16] = core::mem::zeroed();
+                let fb_count = devices::loader_enum_block_devices(bs_ref, &mut fallback_devs, false);
+                let mut found_boot = false;
+                for i in 0..fb_count as usize {
+                    if fat_set_device(fallback_devs[i].handle) == 0 {
+                        if fat_get_file_size(b"install.pkg\0" as *const u8) > 0 {
+                            G_LOADER_BOOT_DEVICE = fallback_devs[i].handle;
+                            found_boot = true;
+                            term_write(b"[boot] Found install.pkg on block device\0" as *const u8);
+                            term_newline();
+                            break;
                         }
                     }
                 }
+                if !found_boot {
+                    term_write(b"[boot] ERROR: no device with install.pkg found\0" as *const u8);
+                    term_newline();
+                }
+            }
+            if !G_LOADER_BOOT_DEVICE.is_null() {
+                if fat_set_device(G_LOADER_BOOT_DEVICE) != 0 {
+                    term_write(b"[boot] WARNING: fat_set_device failed for boot device\0" as *const u8);
+                    term_newline();
+                }
+            } else {
+                term_write(b"[boot] ERROR: cannot initialize FAT - no boot device\0" as *const u8);
+                term_newline();
             }
         }
 
         let mut devices: [devices::LoaderBlockDevice; 16] = unsafe { core::mem::zeroed() };
-        let dev_count = devices::loader_enum_block_devices(unsafe { &*st.boot_services }, &mut devices);
+        let dev_count = devices::loader_enum_block_devices(unsafe { &*st.boot_services }, &mut devices, true);
         let target = if dev_count > 0 {
             let sel = devices::loader_show_device_menu(&devices[..dev_count as usize]);
             if sel >= 0 {
                 let d = &devices[sel as usize];
-                let mut cfg: [u8; 512] = [0u8; 512];
-                let mut pos = 0;
-                let prefix = b"blkio\n";
-                for &c in prefix { if pos < 511 { cfg[pos] = c; pos += 1; } }
-                let mut sb: [u8; 32] = [0u8; 32];
-                unsafe { lumie_std::format::lumie_itoa(d.block_count as i64, sb.as_mut_ptr(), 10); }
-                for &c in sb.iter() { if c == 0 { break; } if pos < 511 { cfg[pos] = c; pos += 1; } }
-                if pos < 511 { cfg[pos] = b'\n'; pos += 1; }
-                for &c in d.label.iter() { if c == 0 { break; } if pos < 511 { cfg[pos] = c; pos += 1; } }
-                unsafe { fat_write_file(b"/system/target.cfg\0" as *const u8, cfg.as_ptr() as *const c_void, pos as u32); }
+                unsafe { crate::install::install_set_preselected_device(d.handle, d.is_partition as i32, d.is_removable as i32); }
                 sel
             } else { -1 }
         } else { -1 };
@@ -248,7 +338,23 @@ pub extern "efiapi" fn lumie_loader_start(
         return;
     }
 
-    /* Installed → boot screen */
+    /* Installed → boot menu (show if other OSes exist in UEFI boot order) */
+    if boot::detect_other_os() {
+        let mut entries: [boot::BootEntry; 16] = unsafe { core::mem::zeroed() };
+        let count = boot::read_boot_entries(&mut entries);
+        if count > 1 {
+            let sel = boot::show_boot_menu(&entries[..count]);
+            let sel_entry = &entries[sel as usize];
+            if !sel_entry.is_lumie {
+                /* Chainload: set BootNext and reboot */
+                boot::set_boot_next_and_reboot(sel_entry.boot_num);
+                /* Should never return */
+                loop {}
+            }
+            /* LumieOS selected → fall through to normal boot */
+        }
+    }
+
     display::loader_boot_screen();
     unsafe { drvcheck_run_scan(); }
 
@@ -306,33 +412,58 @@ pub extern "efiapi" fn lumie_loader_start(
 
     unsafe { exit_boot_services(); lumie_sched_init(); }
 
+    /* Build boot info shared by all loaded modules */
+    let mut boot_info: SysBootInfo = unsafe { core::mem::zeroed() };
+    unsafe {
+        let fb = gop_get_fb();
+        if !fb.is_null() {
+            let fb_ref = &*fb;
+            boot_info.version = SYS_BOOT_INFO_VERSION;
+            boot_info.gop_fb_base = fb_ref.base;
+            boot_info.gop_width = fb_ref.width;
+            boot_info.gop_height = fb_ref.height;
+            boot_info.gop_pitch = fb_ref.pitch;
+        }
+    }
+
+    /* Load kernel module first */
+    {
+        let mut kernel_mod: SysModule = unsafe { core::mem::zeroed() };
+        let kr = unsafe {
+            sys_load(
+                b"/system/kernel.lkrn\0" as *const u8,
+                &mut boot_info as *mut SysBootInfo,
+                &mut kernel_mod as *mut SysModule,
+            )
+        };
+        if kr == 0 && !kernel_mod.entry.is_null() {
+            unsafe {
+                let entry_fn: fn(*mut SysBootInfo, *mut *mut c_void) -> i32 =
+                    core::mem::transmute(kernel_mod.entry);
+                let mut api: *mut c_void = ptr::null_mut();
+                entry_fn(&mut boot_info, &mut api);
+            }
+        }
+    }
+
     /* GPU driver */
     {
-        let mut boot_info: SysBootInfo = unsafe { core::mem::zeroed() };
-        unsafe {
-            let fb = gop_get_fb();
-            if !fb.is_null() {
-                let fb_ref = &*fb;
-                boot_info.version = SYS_BOOT_INFO_VERSION;
-                boot_info.gop_fb_base = fb_ref.base;
-                boot_info.gop_width = fb_ref.width;
-                boot_info.gop_height = fb_ref.height;
-                boot_info.gop_pitch = fb_ref.pitch;
-
-                let mut mod_: SysModule = core::mem::zeroed();
-                if sys_load(
-                    b"\\drivers\\nv_gpu.sys\0" as *const u8,
-                    &mut boot_info as *mut SysBootInfo,
-                    &mut mod_ as *mut SysModule,
-                ) == 0 && !mod_.entry.is_null()
-                {
-                    let mut api: *mut c_void = ptr::null_mut();
-                    let entry_fn: fn(*mut SysBootInfo, *mut *mut c_void) -> i32 =
-                        core::mem::transmute(mod_.entry);
-                    let ret = entry_fn(&mut boot_info, &mut api);
-                    if ret == 0 && !api.is_null() {
-                        g_nv_gpu_api = api;
-                    }
+        let mut mod_: SysModule = unsafe { core::mem::zeroed() };
+        if unsafe {
+            sys_load(
+                b"/drivers/nv_gpu.sys\0" as *const u8,
+                &mut boot_info as *mut SysBootInfo,
+                &mut mod_ as *mut SysModule,
+            )
+        } == 0 && !mod_.entry.is_null()
+        {
+            unsafe {
+                let mut api: *mut c_void = ptr::null_mut();
+                let entry_fn: fn(*mut SysBootInfo, *mut *mut c_void) -> i32 =
+                    core::mem::transmute(mod_.entry);
+                let ret = entry_fn(&mut boot_info, &mut api);
+                if ret == 0 && !api.is_null() {
+                    g_nv_gpu_api = api;
                 }
             }
         }

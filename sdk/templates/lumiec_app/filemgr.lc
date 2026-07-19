@@ -1,0 +1,114 @@
+/* 
+ * LumieOS SDK - Example: File Manager
+ * 
+ * A simple file browser that lists directory contents.
+ * Build: lumiec filemgr.lc
+ * Run:   sysload filemgr.sys
+ */
+
+#include "lumie_os_all.h"
+
+#define MAX_ENTRIES 64
+#define ENTRY_NAME_LEN 256
+
+/* Directory entry structure */
+typedef struct {
+    char name[ENTRY_NAME_LEN];
+    i64 is_dir;
+    i64 size;
+} DirEntry;
+
+/* Draw the file manager UI */
+void draw_ui(void) {
+    term_clear(COLOR_DKGRAY);
+    term_set_fg(COLOR_WHITE);
+    
+    /* Title bar */
+    draw_rect(0, 0, 800, 30, make_color(0, 80, 160));
+    term_set_pos(1, 0);
+    term_set_fg(COLOR_WHITE);
+    term_write("LumieOS File Manager v1.0");
+    
+    /* Status bar */
+    draw_rect(0, 570, 800, 30, make_color(0, 80, 160));
+    term_set_pos(1, 35);
+    term_set_fg(COLOR_LGRAY);
+    term_write("Navigate: UP/DOWN arrows | ENTER: Open dir | ESC: Back | Q: Quit");
+}
+
+/* List directory contents */
+void list_directory(const char *path) {
+    DirEntry entries[MAX_ENTRIES];
+    
+    term_set_pos(1, 2);
+    term_set_fg(COLOR_LCYAN);
+    term_write("Directory: ");
+    term_set_fg(COLOR_WHITE);
+    term_write(path);
+    term_writeln("");
+    term_writeln("");
+    
+    i64 count = 0;
+    i64 y = 4;
+    
+    /* Add parent directory entry if not root */
+    if (strcmp(path, "/") != 0) {
+        term_set_pos(2, y);
+        term_set_fg(COLOR_YELLOW);
+        term_write("[..] Parent Directory");
+        y++;
+        count++;
+    }
+    
+    /* For now, just list what we know exists */
+    /* In a real app, you'd use the FS_LIST syscall */
+    term_set_pos(2, y);
+    term_set_fg(COLOR_LGRAY);
+    term_write("(Use 'ls' in shell to see files)");
+    y++;
+    
+    term_writeln("");
+    term_set_pos(2, y);
+    term_set_fg(COLOR_GREEN);
+    term_write("Total entries: ");
+    term_print_int(count);
+}
+
+int lumiec_main(void) {
+    char current_path[256];
+    strcpy(current_path, "/");
+    
+    draw_ui();
+    list_directory(current_path);
+    
+    i64 running = 1;
+    while (running) {
+        i64 key = input_waitkey();
+        
+        switch (key) {
+            case KEY_Q:
+                running = 0;
+                break;
+            case KEY_ESC:
+                /* Go to parent directory */
+                if (strcmp(current_path, "/") != 0) {
+                    strcpy(current_path, "/");
+                    draw_ui();
+                    list_directory(current_path);
+                }
+                break;
+            case KEY_ENTER:
+                /* Open selected item */
+                term_set_pos(1, 35);
+                term_set_fg(COLOR_YELLOW);
+                term_write("Opening...          ");
+                sleep_ms(500);
+                draw_ui();
+                list_directory(current_path);
+                break;
+        }
+    }
+    
+    term_clear(COLOR_BLACK);
+    return 0;
+}

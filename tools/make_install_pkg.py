@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Packages files into install.pkg for LumieOS loader.
+"""Packages files into install.pkg for LumieOS loader (with LZ4 compression).
 
 Usage:
     python make_install_pkg.py <source_dir> <output_file>
@@ -22,15 +22,22 @@ Directories are automatically created and don't need explicit entries.
 import struct
 import sys
 import os
-import hashlib
 
 PKG_MAGIC = 0x4B47504C  # "LPKG" LE
-PKG_VERSION = 1
+PKG_VERSION = 2  # bumped for compression support
 ENTRY_SIZE = 32
+FLAG_DIR = 1
+FLAG_LZ1 = 2
+
+USE_LZ1 = True
 
 
-def make_install_pkg(source_dir: str, output: str):
-    # Collect all files from source_dir
+def _lz1_compress(data: bytes) -> bytes:
+    from lzss import compress
+    return compress(data)
+
+
+def make_install_pkg(source_dir: str, output: str, compress: bool = True):
     entries = []
     for root, dirs, files in os.walk(source_dir):
         for f in sorted(files):
@@ -43,62 +50,75 @@ def make_install_pkg(source_dir: str, output: str):
             rel = '/' + os.path.relpath(full, source_dir).replace('\\', '/')
             entries.append((rel, full, 0, True))
 
-    # Deduplicate and sort: files first then dirs, alphabetical
     seen = set()
     unique = []
     for rel, full, size, is_dir in entries:
         if rel not in seen:
             seen.add(rel)
             unique.append((rel, full, size, is_dir))
-    # Ensure parent dirs exist before children
     unique.sort(key=lambda x: (x[3], x[0]))
 
     file_count = len(unique)
 
-    # Build the package in memory
     buf = bytearray()
-
-    # -- Header (16 bytes) --
-    buf += struct.pack('<IIII', PKG_MAGIC, PKG_VERSION, file_count, 0)  # entries_off placeholder
+    buf += struct.pack('<IIII', PKG_MAGIC, PKG_VERSION, file_count, 0)
 
     entries_off = 16
     struct.pack_into('<I', buf, 12, entries_off)
 
-    # -- Entries (file_count * 32 bytes) --
     for _ in unique:
         buf += b'\x00' * ENTRY_SIZE
 
-    # -- Path strings --
     path_offs = []
     for rel, _, _, _ in unique:
         path_offs.append(len(buf))
         buf += rel.encode('utf-8') + b'\x00'
 
-    # Pad to 4 bytes
     while len(buf) % 4 != 0:
         buf += b'\x00'
 
-    # -- File data --
-    data_offs = []
-    for i, (rel, full, size, is_dir) in enumerate(unique):
-        data_offs.append(len(buf))
+    # File data
+    file_infos = []
+    for rel, full, size, is_dir in unique:
+        data_off = len(buf)
+        orig_size = 0
+        store_size = 0
+        is_lz1 = False
         if not is_dir:
             with open(full, 'rb') as fh:
-                data = fh.read()
-            buf += data
-            # Pad to 4 bytes
+                raw = fh.read()
+            orig_size = len(raw)
+            if compress:
+                c = _lz1_compress(raw)
+                if len(c) < len(raw):
+                    buf += c
+                    store_size = len(c)
+                    is_lz1 = True
+                else:
+                    buf += raw
+                    store_size = len(raw)
+            else:
+                buf += raw
+                store_size = len(raw)
             while len(buf) % 4 != 0:
                 buf += b'\x00'
+        file_infos.append((data_off, orig_size, store_size, is_lz1))
 
-    # Write back entry data
-    for i, (rel, _, size, is_dir) in enumerate(unique):
+    for i, (rel, _, raw_size, is_dir) in enumerate(unique):
         off = entries_off + i * ENTRY_SIZE
-        flags = 1 if is_dir else 0
+        flags = 0
+        if is_dir:
+            flags |= FLAG_DIR
+        if file_infos[i][3]:
+            flags |= FLAG_LZ1
+        store_size = file_infos[i][2]
+        orig_size = file_infos[i][1]
         struct.pack_into('<IIII', buf, off,
-                         path_offs[i],       # path_off
-                         data_offs[i],       # data_off
-                         size,               # data_sz
-                         flags)             # flags + reserved
+                         path_offs[i],
+                         file_infos[i][0],
+                         store_size,
+                         flags)
+        struct.pack_into('<I', buf, off + 16, orig_size)
 
     with open(output, 'wb') as fh:
         fh.write(buf)
@@ -106,11 +126,18 @@ def make_install_pkg(source_dir: str, output: str):
     print(f"Created {output}: {file_count} entries, {len(buf)} bytes total")
     for i, (rel, _, size, is_dir) in enumerate(unique):
         tag = "DIR " if is_dir else "FILE"
-        print(f"  [{tag}] {rel} ({size} bytes)")
+        if file_infos[i][3]:
+            tag += "(LZ1)"
+            print(f"  [{tag}] {rel} ({size} -> {file_infos[i][1]} bytes, stored={file_infos[i][2]} bytes)")
+        else:
+            print(f"  [{tag}] {rel} ({size} bytes)")
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         print(__doc__, file=sys.stderr)
         sys.exit(1)
-    make_install_pkg(sys.argv[1], sys.argv[2])
+    compress = True
+    if len(sys.argv) == 4 and sys.argv[3] == '--no-compress':
+        compress = False
+    make_install_pkg(sys.argv[1], sys.argv[2], compress=compress)

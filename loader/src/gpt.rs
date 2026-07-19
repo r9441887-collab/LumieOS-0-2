@@ -56,7 +56,7 @@ type EfiBlockIoReadBlocks =
 type EfiBlockIoWriteBlocks =
     Option<unsafe extern "efiapi" fn(*mut c_void, u32, u64, u64, *mut c_void) -> u64>;
 
-#[repr(C, packed)]
+#[repr(C)]
 struct EfiBlockIoMedia {
     pub media_id: u32,
     pub removable_media: u8,
@@ -117,6 +117,56 @@ fn write_sectors(bio: *mut EfiBlockIoProtocol, lba: u64, count: u64, buf: *const
         let st = wb(bio as *mut c_void, (*media).media_id, lba, count * (*media).block_size as u64, buf as *mut c_void);
         if st == 0 { 0 } else { -1 }
     }
+}
+
+fn read_sector(bio: *mut EfiBlockIoProtocol, lba: u64, buf: *mut u8) -> i32 {
+    unsafe {
+        let media = (*bio).media;
+        if media.is_null() { return -1; }
+        let rb = match (*bio).read_blocks { Some(r) => r, None => return -1 };
+        let st = rb(bio as *mut c_void, (*media).media_id, lba, (*media).block_size as u64, buf as *mut c_void);
+        if st == 0 { 0 } else { -1 }
+    }
+}
+
+fn flush_sectors(bio: *mut EfiBlockIoProtocol) -> i32 {
+    unsafe {
+        let fl_ptr = (*bio).flush_blocks;
+        if fl_ptr.is_null() { return 0; }
+        type FlushFn = unsafe extern "efiapi" fn(*mut c_void) -> efi_status;
+        let fl: FlushFn = core::mem::transmute(fl_ptr);
+        let st = fl(bio as *mut c_void);
+        if st == 0 { 0 } else { -1 }
+    }
+}
+
+pub fn check_writable(device_handle: efi_handle) -> Result<(), &'static str> {
+    let bio = match get_block_io(device_handle) { Some(b) => b, None => return Err("Block I/O protocol not found") };
+    unsafe {
+        let media = (*bio).media;
+        if media.is_null() { return Err("Media info unavailable"); }
+        if (*media).read_only != 0 { return Err("Device is read-only"); }
+        if (*media).media_present == 0 { return Err("No media present"); }
+    }
+
+    let mut orig: [u8; 512] = [0u8; 512];
+    let mut backup: [u8; 512] = [0u8; 512];
+    if read_sector(bio, 0, orig.as_mut_ptr()) != 0 {
+        return Err("Cannot read sector 0");
+    }
+    backup.copy_from_slice(&orig);
+
+    if write_sectors(bio, 0, 1, orig.as_ptr()) != 0 {
+        return Err("Write test failed - device may be locked");
+    }
+    flush_sectors(bio);
+
+    if write_sectors(bio, 0, 1, backup.as_ptr()) != 0 {
+        return Err("Restore after write test failed");
+    }
+    flush_sectors(bio);
+
+    Ok(())
 }
 
 pub fn disk_total_sectors(device_handle: efi_handle) -> u64 {
@@ -237,10 +287,13 @@ fn make_partition_entry(
     }
 }
 
+pub type GptProgressCb = Option<unsafe extern "efiapi" fn(*const u8, i32)>;
+
 pub fn create_gpt_partition(
     device_handle: efi_handle,
     size_gb: u64,
     is_esp: bool,
+    progress: GptProgressCb,
 ) -> Option<(u64, u64)> {
     let bio = match get_block_io(device_handle) { Some(b) => b, None => return None };
     let total_sectors = disk_total_sectors(device_handle);
@@ -283,12 +336,23 @@ pub fn create_gpt_partition(
             core::mem::size_of::<GptPartitionEntry>(),
         );
     }
-    let entries_crc = crc32(partition_entries.as_ptr(), core::mem::size_of::<GptPartitionEntry>() as u64);
+    let entries_crc = crc32(partition_entries.as_ptr(), (128 * 128) as u64);
 
+    if let Some(cb) = progress {
+        unsafe { cb(b"Writing protective MBR...\0" as *const u8, 10); }
+    }
     let mut mbr: [u8; 512] = [0u8; 512];
     make_protective_mbr(&mut mbr, total_sectors);
-    if write_sectors(bio, 0, 1, mbr.as_ptr()) != 0 { return None; }
+    if write_sectors(bio, 0, 1, mbr.as_ptr()) != 0 {
+        if let Some(cb) = progress {
+            unsafe { cb(b"ERROR: Failed to write MBR.\0" as *const u8, 0); }
+        }
+        return None;
+    }
 
+    if let Some(cb) = progress {
+        unsafe { cb(b"Writing GPT header...\0" as *const u8, 40); }
+    }
     let mut header: GptHeader = unsafe { core::mem::zeroed() };
     make_gpt_header(&mut header, total_sectors, GPT_FIRST_USABLE_LBA, last_usable_lba, &disk_guid, entries_crc);
     header.crc32 = crc32(&header as *const GptHeader as *const u8, GPT_HEADER_SIZE as u64);
@@ -300,10 +364,29 @@ pub fn create_gpt_partition(
             core::mem::size_of::<GptHeader>() as usize,
         );
     }
-    if write_sectors(bio, 1, 1, header_sector.as_ptr()) != 0 { return None; }
-
-    if write_sectors(bio, GPT_PARTITIONS_START_LBA, 1, partition_entries.as_ptr()) != 0 {
+    if write_sectors(bio, 1, 1, header_sector.as_ptr()) != 0 {
+        if let Some(cb) = progress {
+            unsafe { cb(b"ERROR: Failed to write GPT header.\0" as *const u8, 0); }
+        }
         return None;
+    }
+
+    if let Some(cb) = progress {
+        unsafe { cb(b"Writing partition entries...\0" as *const u8, 70); }
+    }
+    let entries_bytes: usize = 128 * 128;
+    let entries_sectors = (entries_bytes + sector_size as usize - 1) / sector_size as usize;
+    if write_sectors(bio, GPT_PARTITIONS_START_LBA, entries_sectors as u64, partition_entries.as_ptr()) != 0 {
+        if let Some(cb) = progress {
+            unsafe { cb(b"ERROR: Failed to write partition entries.\0" as *const u8, 0); }
+        }
+        return None;
+    }
+
+    flush_sectors(bio);
+
+    if let Some(cb) = progress {
+        unsafe { cb(b"GPT partition table created.\0" as *const u8, 100); }
     }
 
     Some((part_start, part_sectors))

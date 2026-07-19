@@ -21,6 +21,8 @@ pub fn cmd_help(sh: &Shell) {
     sh.svc.term_writeln("  rm/del <file>   - Delete file");
     sh.svc.term_writeln("  rmdir <dir>     - Delete empty directory");
     sh.svc.term_writeln("  mkdir <dir>     - Create directory");
+    sh.svc.term_writeln("  cp <src> <dst>  - Copy file");
+    sh.svc.term_writeln("  mv/ren <s> <d>  - Move/rename file");
     sh.svc.term_writeln("  ps              - List running processes");
     sh.svc.term_writeln("  info            - System information");
     sh.svc.term_writeln("  ver             - OS version");
@@ -41,6 +43,9 @@ pub fn cmd_help(sh: &Shell) {
     sh.svc.term_writeln("  lumiec <src> [o]- LumieC compiler");
     sh.svc.term_writeln("  sysload <mod>   - Load .sys module");
     sh.svc.term_writeln("  beep [freq] [ms] - PC speaker beep (default 440Hz 200ms)");
+    sh.svc.term_writeln("  per <text> [file]- Encode text to binary/x64, optionally save");
+    sh.svc.term_writeln("  per --hex <hex>  - Decode hex string to binary");
+    sh.svc.term_writeln("  per --file <f>   - Read file and show binary dump");
 }
 
 pub fn cmd_clear(sh: &Shell) {

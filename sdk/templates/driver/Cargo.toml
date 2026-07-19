@@ -1,0 +1,18 @@
+[package]
+name = "my_driver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumie_sdk = { path = "../../sdk/lumie_sdk" }
+lumie_std = { path = "../../libs/lumie_std" }
+
+[lib]
+crate-type = ["staticlib"]
+
+[profile.release]
+lto = true
+opt-level = "z"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

@@ -15,7 +15,7 @@ pub struct LoaderBlockDevice {
 type EfiBlockIoReadBlocks =
     Option<unsafe extern "efiapi" fn(*mut c_void, u32, u64, u64, *mut c_void) -> u64>;
 
-#[repr(C, packed)]
+#[repr(C)]
 struct EfiBlockIoMedia {
     pub media_id: u32,
     pub removable_media: u8,
@@ -42,7 +42,7 @@ struct EfiBlockIoProtocol {
     pub flush_blocks: *mut c_void,
 }
 
-pub fn loader_enum_block_devices(bs: &EfiBootServices, devices: &mut [LoaderBlockDevice]) -> i32 {
+pub fn loader_enum_block_devices(bs: &EfiBootServices, devices: &mut [LoaderBlockDevice], skip_partitions: bool) -> i32 {
     let max = devices.len();
     let bio_guid = &EFI_BLOCK_IO_GUID as *const EfiGuid;
     let mut handle_count: u64 = 0;
@@ -92,9 +92,13 @@ pub fn loader_enum_block_devices(bs: &EfiBootServices, devices: &mut [LoaderBloc
             continue;
         }
 
+        /* Skip partition entries to avoid showing duplicates (e.g. USB disk + its partition) */
+        if skip_partitions && media_ref.logical_partition != 0 {
+            continue;
+        }
+
         devices[count as usize].handle = h;
-        devices[count as usize].block_count =
-            (media_ref.last_block + 1) - media_ref.lowest_aligned_lba;
+        devices[count as usize].block_count = media_ref.last_block + 1;
         devices[count as usize].block_size =
             if media_ref.block_size != 0 { media_ref.block_size as u32 } else { 512 };
         devices[count as usize].is_removable = media_ref.removable_media;
@@ -124,9 +128,9 @@ pub fn loader_enum_block_devices(bs: &EfiBootServices, devices: &mut [LoaderBloc
         }
 
         let r: &[u8] = if devices[count as usize].is_removable != 0 {
-            &b"USB Flash"[..]
+            &b"USB Drive"[..]
         } else {
-            &b"Disk    "[..]
+            &b"Hard Disk"[..]
         };
         let mut label = [0u8; 64];
         let mut _lp = 0;
@@ -244,7 +248,7 @@ pub fn loader_show_device_menu(devices: &[LoaderBlockDevice]) -> i32 {
                 if bp < 127 { buf[bp] = c; bp += 1; }
             }
 
-            let total_mb = (devices[idx].block_count * devices[idx].block_size as u64) / (1024 * 1024);
+            let total_mb = devices[idx].block_count / ((1024 * 1024) / devices[idx].block_size as u64);
             let mut sz_buf: [u8; 32] = [0u8; 32];
             unsafe { lumie_std::format::lumie_itoa(total_mb as i64, sz_buf.as_mut_ptr(), 10); }
             let tag = b" (";

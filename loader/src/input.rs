@@ -14,6 +14,7 @@ static mut LD_CLICK_X: i32 = -1;
 static mut LD_CLICK_Y: i32 = -1;
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 struct EfiInputKey {
     scan_code: u16,
     unicode_char: u16,
@@ -58,16 +59,23 @@ pub fn loader_kbd_init(st: *mut EfiSystemTable) {
     }
 }
 
+static mut G_SAVED_KEY: EfiInputKey = EfiInputKey { scan_code: 0, unicode_char: 0 };
+static mut G_HAS_SAVED_KEY: bool = false;
+
 pub fn loader_kbhit() -> bool {
     unsafe {
         if LD_CON_IN.is_null() { return false; }
+        if G_HAS_SAVED_KEY { return true; }
         let con_in = &*(LD_CON_IN as *mut EfiSimpleTextInputProtocol);
         if let Some(rks) = con_in.read_key_stroke {
             let mut key: EfiInputKey = core::mem::zeroed();
-            rks(LD_CON_IN, &mut key) == 0
-        } else {
-            false
+            if rks(LD_CON_IN, &mut key) == 0 {
+                G_SAVED_KEY = key;
+                G_HAS_SAVED_KEY = true;
+                return true;
+            }
         }
+        false
     }
 }
 
@@ -77,39 +85,44 @@ pub fn loader_getchar() -> i32 {
         let con_in = &*(LD_CON_IN as *mut EfiSimpleTextInputProtocol);
         loop {
             let mut key: EfiInputKey = core::mem::zeroed();
-            let st = con_in.read_key_stroke.map(|rks| rks(LD_CON_IN, &mut key));
-            match st {
-                Some(0) => {
-                    if key.unicode_char == 0x0D { return b'\n' as i32; }
-                    if key.unicode_char == 0x08 { return 0x08; }
-                    if key.unicode_char >= 0x01 && key.unicode_char <= 0x7E {
-                        return key.unicode_char as i32;
-                    }
-                    if key.scan_code >= 0x01 && key.scan_code <= 0x0B {
-                        return 0xE0 + key.scan_code as i32;
+            if G_HAS_SAVED_KEY {
+                key = G_SAVED_KEY;
+                G_HAS_SAVED_KEY = false;
+            } else {
+                let st = con_in.read_key_stroke.map(|rks| rks(LD_CON_IN, &mut key));
+                match st {
+                    Some(0) => {}
+                    _ => {
+                        let bs = &*LD_BS;
+                        if !con_in.wait_for_key.is_null() {
+                            type WfeFn = unsafe extern "efiapi" fn(u64, *mut efi_event, *mut u64) -> u64;
+                            type StallFn = unsafe extern "efiapi" fn(u64) -> u64;
+                            let wfe: Option<WfeFn> = core::mem::transmute(bs.wait_for_event);
+                            let stall: Option<StallFn> = core::mem::transmute(bs.stall);
+                            if let Some(wf) = wfe {
+                                let mut idx: u64 = 0;
+                                wf(1, &con_in.wait_for_key as *const *mut c_void as *mut efi_event, &mut idx);
+                            } else if let Some(s) = stall {
+                                s(1000);
+                            }
+                        } else {
+                            type StallFn = unsafe extern "efiapi" fn(u64) -> u64;
+                            let stall: Option<StallFn> = core::mem::transmute(bs.stall);
+                            if let Some(s) = stall {
+                                s(1000);
+                            }
+                        }
+                        continue;
                     }
                 }
-                _ => {
-                    let bs = &*LD_BS;
-                    if !con_in.wait_for_key.is_null() {
-                        type WfeFn = unsafe extern "efiapi" fn(u64, *mut efi_event, *mut u64) -> u64;
-                        type StallFn = unsafe extern "efiapi" fn(u64) -> u64;
-                        let wfe: Option<WfeFn> = core::mem::transmute(bs.wait_for_event);
-                        let stall: Option<StallFn> = core::mem::transmute(bs.stall);
-                        if let Some(wf) = wfe {
-                            let mut idx: u64 = 0;
-                            wf(1, &con_in.wait_for_key as *const *mut c_void as *mut efi_event, &mut idx);
-                        } else if let Some(s) = stall {
-                            s(1000);
-                        }
-                    } else {
-                        type StallFn = unsafe extern "efiapi" fn(u64) -> u64;
-                        let stall: Option<StallFn> = core::mem::transmute(bs.stall);
-                        if let Some(s) = stall {
-                            s(1000);
-                        }
-                    }
-                }
+            }
+            if key.unicode_char == 0x0D { return b'\n' as i32; }
+            if key.unicode_char == 0x08 { return 0x08; }
+            if key.unicode_char >= 0x01 && key.unicode_char <= 0x7E {
+                return key.unicode_char as i32;
+            }
+            if key.scan_code >= 0x01 && key.scan_code <= 0x0B {
+                return 0xE0 + key.scan_code as i32;
             }
         }
     }

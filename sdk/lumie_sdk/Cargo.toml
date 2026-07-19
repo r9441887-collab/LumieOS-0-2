@@ -1,0 +1,11 @@
+[package]
+name = "lumie_sdk"
+version = "0.1.0"
+edition = "2021"
+description = "LumieOS SDK - safe Rust bindings for kernel, drivers, and applications"
+
+[dependencies]
+lumie_std = { path = "../../libs/lumie_std" }
+
+[lib]
+crate-type = ["lib"]

@@ -4,17 +4,31 @@ use core::ptr;
 use crate::uefi::*;
 use crate::ffi::*;
 
+static mut G_PRESELECT_DEVICE: efi_handle = core::ptr::null_mut();
+static mut G_PRESELECT_IS_PARTITION: i32 = -1;
+static mut G_PRESELECT_IS_REMOVABLE: i32 = -1;
+
+pub unsafe fn install_set_preselected_device(handle: efi_handle, is_partition: i32, is_removable: i32) {
+    G_PRESELECT_DEVICE = handle;
+    G_PRESELECT_IS_PARTITION = is_partition;
+    G_PRESELECT_IS_REMOVABLE = is_removable;
+}
+
+unsafe extern "efiapi" fn gpt_progress_cb(msg: *const u8, pct: i32) {
+    loader_console_install(msg, pct);
+}
+
 fn loader_console_install(phase: *const u8, pct: i32) {
     unsafe {
         term_set_fg(0x55FFFF);
-        term_write(b"[" as *const u8);
+        term_write(b"[\0" as *const u8);
         let bar_w = 40;
         let filled = (pct * bar_w) / 100;
         for i in 0..bar_w {
-            if i < filled { term_write(b"#" as *const u8); }
-            else { term_write(b"." as *const u8); }
+            if i < filled { term_write(b"#\0" as *const u8); }
+            else { term_write(b".\0" as *const u8); }
         }
-        term_write(b"] " as *const u8);
+        term_write(b"] \0" as *const u8);
         let mut pc: [u8; 8] = [0u8; 8];
         lumie_std::format::lumie_itoa(pct as i64, pc.as_mut_ptr(), 10);
         let mut pi = 0;
@@ -23,7 +37,7 @@ fn loader_console_install(phase: *const u8, pct: i32) {
             term_write(c.as_ptr());
             pi += 1;
         }
-        term_write(b"% " as *const u8);
+        term_write(b"% \0" as *const u8);
         term_set_fg(0xFFFFFF);
         if !phase.is_null() { term_writeln(phase); }
     }
@@ -32,15 +46,15 @@ fn loader_console_install(phase: *const u8, pct: i32) {
 fn loader_text_confirm(msg: *const u8) -> bool {
     unsafe {
         term_write(msg);
-        term_write(b" (y/n): " as *const u8);
+        term_write(b" (y/n): \0" as *const u8);
         loop {
             let c = crate::input::loader_getchar();
             if c == b'y' as i32 || c == b'Y' as i32 {
-                term_writeln(b"y" as *const u8);
+                term_writeln(b"y\0" as *const u8);
                 return true;
             }
             if c == b'n' as i32 || c == b'N' as i32 {
-                term_writeln(b"n" as *const u8);
+                term_writeln(b"n\0" as *const u8);
                 return false;
             }
         }
@@ -130,123 +144,140 @@ pub fn loader_install_screen() {
         term_clear(0);
         term_set_bg(0);
         term_set_fg(0xFFFFFF);
-        term_writeln(b"=== LumieOS Installer ===" as *const u8);
-        term_writeln(b"" as *const u8);
+        term_writeln(b"=== LumieOS Installer ===\0" as *const u8);
+        term_writeln(b"\0" as *const u8);
     }
 
     let st_ptr = crate::input::get_ld_st();
     if st_ptr.is_null() {
-        unsafe { term_writeln(b"ERROR: No UEFI system table." as *const u8); }
+        unsafe { term_writeln(b"ERROR: No UEFI system table.\0" as *const u8); }
         return;
     }
     let st = unsafe { &*st_ptr };
 
-    let mut install_devices: [crate::devices::LoaderBlockDevice; 16] =
-        unsafe { core::mem::zeroed() };
-    let dev_count = crate::devices::loader_enum_block_devices(unsafe { &*st.boot_services }, &mut install_devices);
-    let target_device: i32;
+    #[allow(unused_assignments)]
+    let mut dev_handle: efi_handle = core::ptr::null_mut();
+    #[allow(unused_assignments)]
+    let mut is_partition: bool = false;
+    #[allow(unused_assignments)]
+    let mut is_removable: bool = false;
 
-    if dev_count == 0 {
-        unsafe {
-            term_writeln(b"ERROR: No block devices found." as *const u8);
-            term_writeln(b"Press any key to return..." as *const u8);
-            crate::input::loader_getchar();
-        }
-        return;
-    }
-
-    /* Show devices */
     unsafe {
-        term_writeln(b"Available devices:" as *const u8);
-        for i in 0..dev_count as usize {
-            let mut buf: [u8; 128] = [0u8; 128];
-            let mut bp = 0;
-            buf[bp] = b' '; bp += 1; buf[bp] = b' '; bp += 1;
-            let mut num: [u8; 8] = [0u8; 8];
-            lumie_std::format::lumie_itoa((i + 1) as i64, num.as_mut_ptr(), 10);
-            for &c in num.iter() { if c == 0 { break; } buf[bp] = c; bp += 1; }
-            buf[bp] = b'.'; bp += 1; buf[bp] = b' '; bp += 1;
-            for &c in install_devices[i].label.iter() {
-                if c == 0 { break; }
-                buf[bp] = c; bp += 1;
+        if G_PRESELECT_IS_PARTITION >= 0 {
+            dev_handle = G_PRESELECT_DEVICE;
+            is_partition = G_PRESELECT_IS_PARTITION != 0;
+            is_removable = G_PRESELECT_IS_REMOVABLE == 1;
+            term_writeln(b"Using pre-selected device.\0" as *const u8);
+            term_writeln(b"\0" as *const u8);
+        } else {
+            let mut install_devices: [crate::devices::LoaderBlockDevice; 16] =
+                core::mem::zeroed();
+            let dev_count = crate::devices::loader_enum_block_devices(&*st.boot_services, &mut install_devices, true);
+
+            if dev_count == 0 {
+                term_writeln(b"ERROR: No block devices found.\0" as *const u8);
+                return;
             }
-            let total_mb = (install_devices[i].block_count * install_devices[i].block_size as u64) / (1024 * 1024);
-            let tag = b" (";
-            for &c in tag { if bp < 127 { buf[bp] = c; bp += 1; } }
-            let mut sz: [u8; 16] = [0u8; 16];
-            lumie_std::format::lumie_itoa(total_mb as i64, sz.as_mut_ptr(), 10);
-            for &c in sz.iter() { if c == 0 { break; } if bp < 127 { buf[bp] = c; bp += 1; } }
-            let tag2 = b" MB)";
-            for &c in tag2 { if bp < 127 { buf[bp] = c; bp += 1; } }
-            buf[bp] = 0;
-            term_writeln(buf.as_ptr());
-        }
-    }
 
-    /* Select device (multi-digit support) */
-    unsafe {
-        term_write(b"Select device (1-" as *const u8);
-        let mut num: [u8; 8] = [0u8; 8];
-        lumie_std::format::lumie_itoa(dev_count as i64, num.as_mut_ptr(), 10);
-        let mut ni = 0;
-        while ni < 8 && num[ni] != 0 {
-            let c = [num[ni], 0u8];
-            term_write(c.as_ptr());
-            ni += 1;
+            term_writeln(b"Available devices:\0" as *const u8);
+            for i in 0..dev_count as usize {
+                let mut buf: [u8; 128] = [0u8; 128];
+                let mut bp = 0;
+                buf[bp] = b' '; bp += 1; buf[bp] = b' '; bp += 1;
+                let mut num: [u8; 8] = [0u8; 8];
+                lumie_std::format::lumie_itoa((i + 1) as i64, num.as_mut_ptr(), 10);
+                for &c in num.iter() { if c == 0 { break; } buf[bp] = c; bp += 1; }
+                buf[bp] = b'.'; bp += 1; buf[bp] = b' '; bp += 1;
+                for &c in install_devices[i].label.iter() {
+                    if c == 0 { break; }
+                    buf[bp] = c; bp += 1;
+                }
+                let total_mb = install_devices[i].block_count / ((1024 * 1024) / install_devices[i].block_size as u64);
+                let tag = b" (\0";
+                for &c in tag { if bp < 127 { buf[bp] = c; bp += 1; } }
+                let mut sz: [u8; 16] = [0u8; 16];
+                lumie_std::format::lumie_itoa(total_mb as i64, sz.as_mut_ptr(), 10);
+                for &c in sz.iter() { if c == 0 { break; } if bp < 127 { buf[bp] = c; bp += 1; } }
+                let tag2 = b" MB)\0";
+                for &c in tag2 { if bp < 127 { buf[bp] = c; bp += 1; } }
+                buf[bp] = 0;
+                term_writeln(buf.as_ptr());
+            }
+
+            term_write(b"Select device (1-\0" as *const u8);
+            let mut num: [u8; 8] = [0u8; 8];
+            lumie_std::format::lumie_itoa(dev_count as i64, num.as_mut_ptr(), 10);
+            let mut ni = 0;
+            while ni < 8 && num[ni] != 0 {
+                let c = [num[ni], 0u8];
+                term_write(c.as_ptr());
+                ni += 1;
+            }
+            term_write(b"): \0" as *const u8);
+
+            let target_device;
+            loop {
+                let sel = read_number();
+                if sel >= 1 && sel <= dev_count as u64 {
+                    target_device = (sel - 1) as i32;
+                    break;
+                }
+            }
+            term_writeln(b"\0" as *const u8);
+
+            dev_handle = install_devices[target_device as usize].handle;
+            is_partition = install_devices[target_device as usize].is_partition != 0;
+            is_removable = install_devices[target_device as usize].is_removable != 0;
         }
-        term_write(b"): " as *const u8);
     }
-    loop {
-        let sel = read_number();
-        if sel >= 1 && sel <= dev_count as u64 {
-            target_device = (sel - 1) as i32;
-            break;
-        }
-    }
-    unsafe { term_writeln(b"" as *const u8); }
 
     /* Get partition size in GB */
     unsafe {
-        term_write(b"Enter size in GB for LumieOS (default 50): " as *const u8);
+        term_write(b"Enter size in GB for LumieOS (default 50): \0" as *const u8);
     }
     let size_gb = read_number();
     let size_gb = if size_gb == 0 { 50 } else { size_gb };
-    unsafe { term_writeln(b"" as *const u8); }
-
-    let dev_handle = install_devices[target_device as usize].handle;
-    let is_partition = install_devices[target_device as usize].is_partition != 0;
+    unsafe { term_writeln(b"\0" as *const u8); }
 
     /* Check if this is a whole disk (not a partition) */
     if !is_partition {
         unsafe {
             let mut msg: [u8; 128] = [0u8; 128];
             let mut mp = 0;
-            let pre = b"Will create a ";
-            for &c in pre { if mp < 127 { msg[mp] = c; mp += 1; } }
+            let pre = b"Will create a \0";
+            for &c in pre { if c == 0 { break; } if mp < 127 { msg[mp] = c; mp += 1; } }
             let mut gb_str: [u8; 8] = [0u8; 8];
             lumie_std::format::lumie_itoa(size_gb as i64, gb_str.as_mut_ptr(), 10);
             for &c in gb_str.iter() { if c == 0 { break; } if mp < 127 { msg[mp] = c; mp += 1; } }
-            let post = b" GB GPT partition on this disk.";
-            for &c in post { if mp < 127 { msg[mp] = c; mp += 1; } }
+            let post = b" GB GPT partition on this disk.\0";
+            for &c in post { if c == 0 { break; } if mp < 127 { msg[mp] = c; mp += 1; } }
             msg[mp] = 0;
             term_writeln(msg.as_ptr());
         }
     } else {
-        unsafe { term_writeln(b"Selected device is already a partition." as *const u8); }
+        unsafe { term_writeln(b"Selected device is already a partition.\0" as *const u8); }
     }
 
     /* Check for other OS */
-    let has_other_os = detect_other_os_in_boot_order();
+    let has_other_os = crate::boot::detect_other_os();
     let register_uefi;
     if has_other_os {
-        unsafe { term_writeln(b"Detected another OS in UEFI boot order." as *const u8); }
-        register_uefi = loader_text_confirm(b"Register LumieOS in UEFI boot menu?" as *const u8);
+        unsafe {
+            term_writeln(b"\0" as *const u8);
+            term_writeln(b"=== UEFI Boot Menu ===\0" as *const u8);
+            term_writeln(b"Detected another OS in UEFI boot order.\0" as *const u8);
+        }
+        register_uefi = loader_text_confirm(b"Register LumieOS in UEFI boot menu?\0" as *const u8);
     } else {
-        register_uefi = loader_text_confirm(b"Register LumieOS in UEFI boot menu?" as *const u8);
+        register_uefi = loader_text_confirm(b"Register LumieOS in UEFI boot menu?\0" as *const u8);
     }
 
-    if !loader_text_confirm(b"Format and install LumieOS on this device?" as *const u8) {
-        unsafe { term_writeln(b"Installation cancelled." as *const u8); }
+    unsafe {
+        term_writeln(b"\0" as *const u8);
+        term_writeln(b"=== Installation ===\0" as *const u8);
+    }
+    if !loader_text_confirm(b"Format and install LumieOS on this device?\0" as *const u8) {
+        unsafe { term_writeln(b"Installation cancelled.\0" as *const u8); }
         return;
     }
 
@@ -256,17 +287,47 @@ pub fn loader_install_screen() {
     let boot_dev = crate::get_boot_device();
 
     if !boot_dev.is_null() {
-        unsafe { fat_set_device(boot_dev); }
-        if unsafe { install_pkg_open(b"install.pkg\0" as *const u8, pkg.as_mut_ptr() as *mut c_void) } == 0 {
+        unsafe { fat_set_partition_offset(0); }
+        let set_dev_rc = unsafe { fat_set_device(boot_dev) };
+        if set_dev_rc != 0 {
+            unsafe {
+                let mut msg: [u8; 80] = [0u8; 80];
+                let pfx = b"ERROR: fat_set_device returned \0";
+                let mut mp = 0;
+                for &c in pfx { if mp < 79 { msg[mp] = c; mp += 1; } }
+                let mut num: [u8; 8] = [0u8; 8];
+                lumie_std::format::lumie_itoa(set_dev_rc as i64, num.as_mut_ptr(), 10);
+                for &c in num.iter() { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
+                msg[mp] = 0;
+                term_writeln(msg.as_ptr());
+            }
+            return;
+        }
+        let open_rc = unsafe { install_pkg_open(b"install.pkg\0" as *const u8, pkg.as_mut_ptr() as *mut c_void) };
+        if open_rc == 0 {
             pkg_found = true;
+        } else {
+            unsafe {
+                let mut msg: [u8; 80] = [0u8; 80];
+                let pfx = b"ERROR: install_pkg_open returned \0";
+                let mut mp = 0;
+                for &c in pfx { if mp < 79 { msg[mp] = c; mp += 1; } }
+                let mut num: [u8; 8] = [0u8; 8];
+                lumie_std::format::lumie_itoa(open_rc as i64, num.as_mut_ptr(), 10);
+                for &c in num.iter() { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
+                msg[mp] = 0;
+                term_writeln(msg.as_ptr());
+            }
+        }
+    } else {
+        unsafe {
+            term_writeln(b"ERROR: boot device handle is NULL.\0" as *const u8);
         }
     }
 
     if !pkg_found {
         unsafe {
-            term_writeln(b"ERROR: install.pkg not found on boot device." as *const u8);
-            term_writeln(b"Press any key to return..." as *const u8);
-            crate::input::loader_getchar();
+            term_writeln(b"ERROR: install.pkg not found on boot device.\0" as *const u8);
         }
         return;
     }
@@ -277,94 +338,131 @@ pub fn loader_install_screen() {
 
     /* Auto-detect filesystem */
     let mut use_ntfs;
+    let mut use_lumfs;
     if is_partition {
-        /* Try NTFS first, then FAT32 */
-        let mut ok = false;
-        use_ntfs = true;
-        if unsafe { ntfs_set_device(dev_handle) } == 0 {
-            unsafe { term_writeln(b"Detected NTFS filesystem." as *const u8); }
-            ok = true;
+        /* Try LumFS first, then NTFS, then FAT32 */
+        use_lumfs = true;
+        use_ntfs = false;
+        if unsafe { crate::ffi::lumfs_set_device(dev_handle) } == 0 {
+            unsafe { term_writeln(b"Detected LumFS filesystem.\0" as *const u8); }
         } else {
-            use_ntfs = false;
-            if unsafe { fat_set_device(dev_handle) } == 0 {
-                unsafe { term_writeln(b"Detected FAT32 filesystem." as *const u8); }
-                ok = true;
+            use_lumfs = false;
+            use_ntfs = true;
+            if unsafe { ntfs_set_device(dev_handle) } == 0 {
+                unsafe { term_writeln(b"Detected NTFS filesystem.\0" as *const u8); }
+            } else {
+                use_ntfs = false;
+                if unsafe { fat_set_device(dev_handle) } == 0 {
+                    unsafe { term_writeln(b"Detected FAT32 filesystem.\0" as *const u8); }
+                } else {
+                    unsafe { term_writeln(b"No filesystem detected, will format as LumFS.\0" as *const u8); }
+                }
             }
-        }
-        if !ok {
-            unsafe {
-                term_writeln(b"ERROR: Unsupported filesystem on partition (not NTFS or FAT32)." as *const u8);
-                term_writeln(b"Press any key to return..." as *const u8);
-                crate::input::loader_getchar();
-            }
-            return;
         }
         let bio_guid = &EFI_BLOCK_IO_GUID as *const EfiGuid;
-        let mut bio: *mut c_void = ptr::null_mut();
+        let mut bio: *mut crate::uefi::EfiBlockIoProtocol = ptr::null_mut();
         let es2 = unsafe {
             if let Some(hp) = (*st.boot_services).handle_protocol {
-                hp(dev_handle, bio_guid, &mut bio)
+                hp(dev_handle, bio_guid, &mut bio as *mut *mut crate::uefi::EfiBlockIoProtocol as *mut *mut c_void)
             } else { 1 }
         };
         if es2 == 0 && !bio.is_null() {
-            let media_ptr = unsafe { *(bio as *mut *mut c_void).add(1) };
-            if !media_ptr.is_null() {
-                let last_block = unsafe { *(media_ptr as *mut u64).add(2) };
+            let media = unsafe { (*bio).media };
+            if !media.is_null() {
+                let last_block = unsafe { (*media).last_block };
                 total_disk_sectors = last_block + 1;
             } else { total_disk_sectors = 1024 * 1024; }
         } else { total_disk_sectors = 1024 * 1024; }
         part_start = 0;
         part_sectors = total_disk_sectors;
     } else {
-        /* Whole disk — create GPT + FAT32 */
+        /* Whole disk — create GPT + LumFS */
         use_ntfs = false;
-        unsafe {
-            term_writeln(b"Creating GPT partition table..." as *const u8);
+        use_lumfs = true;
+
+        if is_removable {
+            unsafe {
+                term_set_fg(0xFFFF00);
+                term_writeln(b"WARNING: Selected device is removable media (USB flash drive).\0" as *const u8);
+                term_writeln(b"All data on this device will be PERMANENTLY erased!\0" as *const u8);
+                term_set_fg(0xFFFFFF);
+            }
+            if !loader_text_confirm(b"Continue with removable device?\0" as *const u8) {
+                unsafe { term_writeln(b"Installation cancelled.\0" as *const u8); }
+                unsafe { install_pkg_close(pkg.as_mut_ptr() as *mut c_void); }
+                return;
+            }
         }
-        match crate::gpt::create_gpt_partition(dev_handle, size_gb, false) {
+
+        unsafe {
+            term_writeln(b"Checking write access...\0" as *const u8);
+        }
+        let write_check = crate::gpt::check_writable(dev_handle);
+        if let Err(e) = write_check {
+            unsafe {
+                term_set_fg(0xFF0000);
+                let mut msg: [u8; 96] = [0u8; 96];
+                let pfx = b"ERROR: \0";
+                let mut mp = 0;
+                for &c in pfx { if mp < 95 { msg[mp] = c; mp += 1; } }
+                for &c in e.as_bytes() { if mp < 95 { msg[mp] = c; mp += 1; } }
+                msg[mp] = 0;
+                term_writeln(msg.as_ptr());
+                term_writeln(b"Cannot write to this device. Check write-protect switch or permissions.\0" as *const u8);
+                term_set_fg(0xFFFFFF);
+            }
+            unsafe { install_pkg_close(pkg.as_mut_ptr() as *mut c_void); }
+            return;
+        }
+        unsafe {
+            term_writeln(b"Write access OK.\0" as *const u8);
+            term_writeln(b"\0" as *const u8);
+            term_writeln(b"Creating GPT partition table...\0" as *const u8);
+        }
+        match crate::gpt::create_gpt_partition(dev_handle, size_gb, false, Some(gpt_progress_cb)) {
             Some((start, sectors)) => {
                 part_start = start;
                 part_sectors = sectors;
-                /* Signal the filesystem to use the partition directly by its handle */
-                /* For now, we set up the device and format at offset */
-                unsafe { fat_set_device(dev_handle); }
+                unsafe {
+                    fat_set_partition_offset(part_start);
+                    if crate::ffi::lumfs_set_device(dev_handle) != 0 {
+                        term_writeln(b"ERROR: LumFS init failed after GPT creation.\0" as *const u8);
+                        install_pkg_close(pkg.as_mut_ptr() as *mut c_void);
+                        return;
+                    }
+                }
             }
             None => {
                 unsafe {
-                    term_writeln(b"ERROR: Failed to create GPT partition." as *const u8);
-                    term_writeln(b"Press any key to return..." as *const u8);
-                    crate::input::loader_getchar();
+                    term_writeln(b"ERROR: Failed to create GPT partition.\0" as *const u8);
+                    term_writeln(b"The device may be too slow or write-protected.\0" as *const u8);
                 }
+                unsafe { install_pkg_close(pkg.as_mut_ptr() as *mut c_void); }
                 return;
             }
         }
     }
 
     /* Format */
-    unsafe { term_writeln(b"Formatting..." as *const u8); }
-    loader_console_install(b"Formatting..." as *const u8, 10);
+    unsafe { term_writeln(b"Formatting...\0" as *const u8); }
+    loader_console_install(b"Formatting...\0" as *const u8, 10);
 
     if use_ntfs {
-        unsafe { term_writeln(b"NTFS already formatted, skipping format." as *const u8); }
+        unsafe { term_writeln(b"NTFS already formatted, skipping format.\0" as *const u8); }
+    } else if use_lumfs && (is_partition || part_start != 0) {
+        unsafe { crate::ffi::lumfs_format_at(0, part_sectors); }
+    } else if use_lumfs {
+        unsafe { crate::ffi::lumfs_format_at(part_start, part_sectors); }
     } else if is_partition || part_start == 0 {
         unsafe { fat_format(part_sectors); }
     } else {
-        /* Format at partition offset — need to use raw block I/O */
-        unsafe { fat_format_at(part_start, part_sectors); }
+        /* Format at offset 0 (relative to partition), G_PARTITION_OFFSET is set */
+        unsafe { fat_format_at(0, part_sectors); }
     }
-    loader_console_install(b"Format done" as *const u8, 20);
-
-    /* If we created a GPT partition, set up filesystem on the partition area */
-    if !is_partition && part_start > 0 {
-        if use_ntfs {
-            unsafe { ntfs_set_device(dev_handle); }
-        } else {
-            unsafe { fat_set_device(dev_handle); }
-        }
-    }
+    loader_console_install(b"Format done\0" as *const u8, 20);
 
     /* Directories */
-    loader_console_install(b"Creating directories..." as *const u8, 30);
+    loader_console_install(b"Creating directories...\0" as *const u8, 30);
     if use_ntfs {
         if unsafe { ntfs_exists(b"/\0" as *const u8) } == 0 { /* Root exists */ }
         if unsafe { ntfs_exists(b"/system\0" as *const u8) } == 0 { unsafe { ntfs_mkdir(b"/system\0" as *const u8); } }
@@ -378,35 +476,55 @@ pub fn loader_install_screen() {
     }
 
     /* Extract */
-    loader_console_install(b"Extracting system files..." as *const u8, 50);
+    loader_console_install(b"Extracting system files...\0" as *const u8, 50);
+    let mut install_ok = true;
     unsafe {
         if use_ntfs {
             install_pkg_set_write_fn(Some(ntfs_write_file));
         } else {
             install_pkg_set_write_fn(Some(fat_write_file));
         }
-        install_pkg_extract_all(pkg.as_mut_ptr() as *mut c_void, ptr::null_mut());
+        if install_pkg_extract_all(pkg.as_mut_ptr() as *mut c_void, ptr::null_mut()) != 0 {
+            install_ok = false;
+        }
     }
 
     /* Bootloader */
-    loader_console_install(b"Installing bootloader..." as *const u8, 75);
-    unsafe { fat_install_bootloader(); }
+    loader_console_install(b"Installing bootloader...\0" as *const u8, 75);
+    unsafe { fat_install_bootloader(dev_handle, part_start); }
 
     if register_uefi {
-        loader_console_install(b"Registering UEFI boot entry..." as *const u8, 80);
-        unsafe { lumie_efi_register_boot_entry(); }
+        loader_console_install(b"Registering UEFI boot entry...\0" as *const u8, 80);
+        let reg_rc = unsafe { lumie_efi_register_boot_entry_for_target(dev_handle, part_start, part_sectors) };
+        if reg_rc != 0 {
+            unsafe {
+                term_set_fg(0xFF0000);
+                term_set_bg(0);
+                term_writeln(b"\0" as *const u8);
+                term_writeln(b"WARNING: UEFI boot registration failed.\0" as *const u8);
+                term_writeln(b"Press F11 (or Esc/F12) during boot and select LumieOS manually.\0" as *const u8);
+                term_set_fg(0xFFFFFF);
+            }
+        }
     } else {
-        loader_console_install(b"Skipping UEFI boot entry..." as *const u8, 80);
+        loader_console_install(b"Skipping UEFI boot entry...\0" as *const u8, 80);
+        unsafe {
+            term_writeln(b"\0" as *const u8);
+            term_set_fg(0xFFFF00);
+            term_writeln(b"LumieOS NOT registered in UEFI boot menu.\0" as *const u8);
+            term_writeln(b"Press F11 (or Esc/F12) during boot and select LumieOS manually.\0" as *const u8);
+            term_set_fg(0xFFFFFF);
+        }
     }
 
     /* Timezone */
-    loader_console_install(b"Setting timezone..." as *const u8, 90);
+    loader_console_install(b"Setting timezone...\0" as *const u8, 90);
     unsafe {
-        term_writeln(b"" as *const u8);
-        term_writeln(b"Select timezone:" as *const u8);
-        term_writeln(b"  1. Moscow (UTC+3)" as *const u8);
-        term_writeln(b"  2. Krasnoyarsk (UTC+7)" as *const u8);
-        term_write(b"Choice (1-2): " as *const u8);
+        term_writeln(b"\0" as *const u8);
+        term_writeln(b"Select timezone:\0" as *const u8);
+        term_writeln(b"  1. Moscow (UTC+3)\0" as *const u8);
+        term_writeln(b"  2. Krasnoyarsk (UTC+7)\0" as *const u8);
+        term_write(b"Choice (1-2): \0" as *const u8);
     }
     let mut _tz_sel: i32 = 0;
     loop {
@@ -414,7 +532,7 @@ pub fn loader_install_screen() {
         if c == b'1' as i32 { _tz_sel = 0; break; }
         if c == b'2' as i32 { _tz_sel = 1; break; }
     }
-    unsafe { term_writeln(b"" as *const u8); }
+    unsafe { term_writeln(b"\0" as *const u8); }
 
     let tz_offsets: [i32; 2] = [180, 420];
     let mut tz_buf: [u8; 16] = [0u8; 16];
@@ -434,8 +552,8 @@ pub fn loader_install_screen() {
     unsafe {
         let mut cfg: [u8; 64] = [0u8; 64];
         let mut cp = 0;
-        let prefix = b"alloc_gb=";
-        for &c in prefix { if cp < 63 { cfg[cp] = c; cp += 1; } }
+        let prefix = b"alloc_gb=\0";
+        for &c in prefix { if c == 0 { break; } if cp < 63 { cfg[cp] = c; cp += 1; } }
         let mut gb_str: [u8; 8] = [0u8; 8];
         lumie_std::format::lumie_itoa(size_gb as i64, gb_str.as_mut_ptr(), 10);
         for &c in gb_str.iter() { if c == 0 { break; } if cp < 63 { cfg[cp] = c; cp += 1; } }
@@ -447,19 +565,20 @@ pub fn loader_install_screen() {
         }
     }
 
-    /* Self-deletion: remove install.pkg from boot device */
-    if !boot_dev.is_null() {
+    /* Self-deletion: remove install.pkg from boot device (only on success) */
+    if install_ok && !boot_dev.is_null() {
+        unsafe { fat_set_partition_offset(0); }
         unsafe { fat_set_device(boot_dev); }
         unsafe { fat_delete(b"install.pkg\0" as *const u8); }
     }
 
-    loader_console_install(b"Installation complete!" as *const u8, 100);
+    loader_console_install(b"Installation complete!\0" as *const u8, 100);
     unsafe {
-        term_writeln(b"" as *const u8);
-        term_writeln(b"LumieOS installed successfully!" as *const u8);
-        term_writeln(b"install.pkg has been removed." as *const u8);
-        term_writeln(b"" as *const u8);
-        term_writeln(b"Remove the installation media and press any key to reboot..." as *const u8);
+        term_writeln(b"\0" as *const u8);
+        term_writeln(b"LumieOS installed successfully!\0" as *const u8);
+        term_writeln(b"install.pkg has been removed.\0" as *const u8);
+        term_writeln(b"\0" as *const u8);
+        term_writeln(b"Remove the installation media and press any key to reboot...\0" as *const u8);
         crate::input::loader_getchar();
     }
 
