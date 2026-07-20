@@ -7,11 +7,39 @@ name = "lumie_math"
 version = "0.1.0"
 
 [[package]]
+name = "lumie_sdk"
+version = "0.1.0"
+dependencies = [
+ "lumie_std",
+]
+
+[[package]]
 name = "lumie_std"
 version = "0.1.0"
 
 [[package]]
 name = "lumieos-desktop"
+version = "0.1.0"
+dependencies = [
+ "lumie_std",
+]
+
+[[package]]
+name = "lumieos-drv-fs"
+version = "0.1.0"
+dependencies = [
+ "lumie_std",
+]
+
+[[package]]
+name = "lumieos-drv-kbd"
+version = "0.1.0"
+dependencies = [
+ "lumie_std",
+]
+
+[[package]]
+name = "lumieos-drv-mouse"
 version = "0.1.0"
 dependencies = [
  "lumie_std",
@@ -43,5 +71,29 @@ dependencies = [
 name = "lumieos-shell"
 version = "0.1.0"
 dependencies = [
+ "lumie_std",
+]
+
+[[package]]
+name = "sdk_gpu_demo"
+version = "0.1.0"
+dependencies = [
+ "lumie_sdk",
+ "lumie_std",
+]
+
+[[package]]
+name = "sdk_hello"
+version = "0.1.0"
+dependencies = [
+ "lumie_sdk",
+ "lumie_std",
+]
+
+[[package]]
+name = "sdk_sysinfo"
+version = "0.1.0"
+dependencies = [
+ "lumie_sdk",
  "lumie_std",
 ]
