@@ -93,7 +93,7 @@ pub fn cmd_per(sh: &Shell, arg1: Option<&[u8]>, arg2: Option<&[u8]>) {
         return;
     }
 
-    let bytes = text.as_bytes();
+    let bytes = text;
 
     sh.svc.term_set_fg(11);
     sh.svc.term_write("Input: ");
