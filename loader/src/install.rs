@@ -244,12 +244,12 @@ pub fn loader_install_screen() {
         unsafe {
             let mut msg: [u8; 128] = [0u8; 128];
             let mut mp = 0;
-            let pre = b"Will create a \0";
+            let pre = b"Will create: ESP (FAT32, 260 MB) + LumFS (\0";
             for &c in pre { if c == 0 { break; } if mp < 127 { msg[mp] = c; mp += 1; } }
             let mut gb_str: [u8; 8] = [0u8; 8];
             lumie_std::format::lumie_itoa(size_gb as i64, gb_str.as_mut_ptr(), 10);
             for &c in gb_str.iter() { if c == 0 { break; } if mp < 127 { msg[mp] = c; mp += 1; } }
-            let post = b" GB GPT partition on this disk.\0";
+            let post = b" GB) on this disk.\0";
             for &c in post { if c == 0 { break; } if mp < 127 { msg[mp] = c; mp += 1; } }
             msg[mp] = 0;
             term_writeln(msg.as_ptr());
@@ -266,6 +266,7 @@ pub fn loader_install_screen() {
             term_writeln(b"\0" as *const u8);
             term_writeln(b"=== UEFI Boot Menu ===\0" as *const u8);
             term_writeln(b"Detected another OS in UEFI boot order.\0" as *const u8);
+            term_writeln(b"LumieOS will be added AFTER existing entries (not at position 1).\0" as *const u8);
         }
         register_uefi = loader_text_confirm(b"Register LumieOS in UEFI boot menu?\0" as *const u8);
     } else {
@@ -291,6 +292,7 @@ pub fn loader_install_screen() {
         let set_dev_rc = unsafe { fat_set_device(boot_dev) };
         if set_dev_rc != 0 {
             unsafe {
+                term_set_fg(0xFF0000);
                 let mut msg: [u8; 80] = [0u8; 80];
                 let pfx = b"ERROR: fat_set_device returned \0";
                 let mut mp = 0;
@@ -300,6 +302,7 @@ pub fn loader_install_screen() {
                 for &c in num.iter() { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
                 msg[mp] = 0;
                 term_writeln(msg.as_ptr());
+                term_set_fg(0xFFFFFF);
             }
             return;
         }
@@ -308,6 +311,7 @@ pub fn loader_install_screen() {
             pkg_found = true;
         } else {
             unsafe {
+                term_set_fg(0xFF0000);
                 let mut msg: [u8; 80] = [0u8; 80];
                 let pfx = b"ERROR: install_pkg_open returned \0";
                 let mut mp = 0;
@@ -317,23 +321,32 @@ pub fn loader_install_screen() {
                 for &c in num.iter() { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
                 msg[mp] = 0;
                 term_writeln(msg.as_ptr());
+                term_set_fg(0xFFFFFF);
             }
         }
     } else {
         unsafe {
+            term_set_fg(0xFF0000);
             term_writeln(b"ERROR: boot device handle is NULL.\0" as *const u8);
+            term_writeln(b"Cannot find installation media. Make sure install.pkg exists.\0" as *const u8);
+            term_set_fg(0xFFFFFF);
         }
     }
 
     if !pkg_found {
         unsafe {
+            term_set_fg(0xFF0000);
             term_writeln(b"ERROR: install.pkg not found on boot device.\0" as *const u8);
+            term_writeln(b"Make sure install.pkg is in the root of the boot partition.\0" as *const u8);
+            term_set_fg(0xFFFFFF);
         }
         return;
     }
 
     let part_start: u64;
     let part_sectors: u64;
+    let esp_part_start: u64;
+    let esp_part_sectors: u64;
     let total_disk_sectors: u64;
 
     /* Auto-detect filesystem */
@@ -375,8 +388,10 @@ pub fn loader_install_screen() {
         } else { total_disk_sectors = 1024 * 1024; }
         part_start = 0;
         part_sectors = total_disk_sectors;
+        esp_part_start = 0;
+        esp_part_sectors = 0;
     } else {
-        /* Whole disk — create GPT + LumFS */
+        /* Whole disk — create GPT with dual partitions (ESP + LumFS) */
         use_ntfs = false;
         use_lumfs = true;
 
@@ -417,34 +432,107 @@ pub fn loader_install_screen() {
         unsafe {
             term_writeln(b"Write access OK.\0" as *const u8);
             term_writeln(b"\0" as *const u8);
-            term_writeln(b"Creating GPT partition table...\0" as *const u8);
+            term_writeln(b"Creating GPT with ESP (FAT32) + LumFS partitions...\0" as *const u8);
         }
-        match crate::gpt::create_gpt_partition(dev_handle, size_gb, false, Some(gpt_progress_cb)) {
-            Some((start, sectors)) => {
-                part_start = start;
-                part_sectors = sectors;
+
+        /* Create dual partitions: ESP (260 MB FAT32) + LumFS (system) */
+        let dual_result = crate::gpt::create_gpt_dual_partitions(dev_handle, size_gb, 260, Some(gpt_progress_cb));
+        match dual_result {
+            Some(ref result) => {
+                part_start = result.lumfs_start;
+                part_sectors = result.lumfs_sectors;
+                esp_part_start = result.esp_start;
+                esp_part_sectors = result.esp_sectors;
                 unsafe {
-                    fat_set_partition_offset(part_start);
-                    if crate::ffi::lumfs_set_device(dev_handle) != 0 {
-                        term_writeln(b"ERROR: LumFS init failed after GPT creation.\0" as *const u8);
-                        install_pkg_close(pkg.as_mut_ptr() as *mut c_void);
-                        return;
-                    }
+                    term_set_fg(0x00CC00);
+                    term_writeln(b"GPT partition table created successfully.\0" as *const u8);
+                    let mut msg: [u8; 80] = [0u8; 80];
+                    let mut mp = 0;
+                    for &c in b"  ESP (FAT32): LBA \0" { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
+                    let mut num: [u8; 16] = [0u8; 16];
+                    lumie_std::format::lumie_itoa(esp_part_start as i64, num.as_mut_ptr(), 10);
+                    for &c in num.iter() { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
+                    for &c in b", \0" { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
+                    let mut mb: [u8; 8] = [0u8; 8];
+                    lumie_std::format::lumie_itoa((esp_part_sectors * 512 / 1048576) as i64, mb.as_mut_ptr(), 10);
+                    for &c in mb.iter() { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
+                    for &c in b" MB\0" { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
+                    msg[mp] = 0;
+                    term_writeln(msg.as_ptr());
+
+                    let mut msg2: [u8; 80] = [0u8; 80];
+                    let mut mp2 = 0;
+                    for &c in b"  LumFS: LBA \0" { if c == 0 { break; } if mp2 < 79 { msg2[mp2] = c; mp2 += 1; } }
+                    let mut num2: [u8; 16] = [0u8; 16];
+                    lumie_std::format::lumie_itoa(part_start as i64, num2.as_mut_ptr(), 10);
+                    for &c in num2.iter() { if c == 0 { break; } if mp2 < 79 { msg2[mp2] = c; mp2 += 1; } }
+                    for &c in b", \0" { if c == 0 { break; } if mp2 < 79 { msg2[mp2] = c; mp2 += 1; } }
+                    let mut gb2: [u8; 8] = [0u8; 8];
+                    lumie_std::format::lumie_itoa(size_gb as i64, gb2.as_mut_ptr(), 10);
+                    for &c in gb2.iter() { if c == 0 { break; } if mp2 < 79 { msg2[mp2] = c; mp2 += 1; } }
+                    for &c in b" GB\0" { if c == 0 { break; } if mp2 < 79 { msg2[mp2] = c; mp2 += 1; } }
+                    msg2[mp2] = 0;
+                    term_writeln(msg2.as_ptr());
+                    term_set_fg(0xFFFFFF);
                 }
             }
             None => {
                 unsafe {
-                    term_writeln(b"ERROR: Failed to create GPT partition.\0" as *const u8);
-                    term_writeln(b"The device may be too slow or write-protected.\0" as *const u8);
+                    term_set_fg(0xFF0000);
+                    term_writeln(b"ERROR: Failed to create GPT partitions.\0" as *const u8);
+                    term_writeln(b"The device may be too small, slow, or write-protected.\0" as *const u8);
+                    term_writeln(b"Minimum required: ~300 MB for ESP + space for LumFS.\0" as *const u8);
+                    term_set_fg(0xFFFFFF);
                 }
                 unsafe { install_pkg_close(pkg.as_mut_ptr() as *mut c_void); }
+                return;
+            }
+        }
+
+        /* Format ESP as FAT32 */
+        unsafe {
+            term_writeln(b"\0" as *const u8);
+            term_writeln(b"Formatting ESP as FAT32...\0" as *const u8);
+            fat_set_partition_offset(esp_part_start);
+            fat_format_at(0, esp_part_sectors);
+            if fat_exists(b"/\0" as *const u8) == 0 {
+                term_set_fg(0xFF0000);
+                term_writeln(b"ERROR: ESP format failed - FAT32 not accessible.\0" as *const u8);
+                term_writeln(b"The partition may be corrupted or too small.\0" as *const u8);
+                term_set_fg(0xFFFFFF);
+                install_pkg_close(pkg.as_mut_ptr() as *mut c_void);
+                return;
+            }
+            fat_mkdir(b"/EFI\0" as *const u8);
+            fat_mkdir(b"/EFI/BOOT\0" as *const u8);
+            term_set_fg(0x00CC00);
+            term_writeln(b"ESP formatted successfully.\0" as *const u8);
+            term_set_fg(0xFFFFFF);
+        }
+
+        /* Copy bootloader to ESP */
+        unsafe {
+            term_writeln(b"Installing bootloader to ESP...\0" as *const u8);
+            fat_install_bootloader(dev_handle, esp_part_start);
+        }
+
+        /* Initialize LumFS on system partition */
+        unsafe {
+            term_writeln(b"Initializing LumFS on system partition...\0" as *const u8);
+            fat_set_partition_offset(part_start);
+            if crate::ffi::lumfs_set_device(dev_handle) != 0 {
+                term_set_fg(0xFF0000);
+                term_writeln(b"ERROR: LumFS initialization failed.\0" as *const u8);
+                term_writeln(b"The system partition may be corrupted.\0" as *const u8);
+                term_set_fg(0xFFFFFF);
+                install_pkg_close(pkg.as_mut_ptr() as *mut c_void);
                 return;
             }
         }
     }
 
     /* Format */
-    unsafe { term_writeln(b"Formatting...\0" as *const u8); }
+    unsafe { term_writeln(b"Formatting system partition...\0" as *const u8); }
     loader_console_install(b"Formatting...\0" as *const u8, 10);
 
     if use_ntfs {
@@ -456,7 +544,6 @@ pub fn loader_install_screen() {
     } else if is_partition || part_start == 0 {
         unsafe { fat_format(part_sectors); }
     } else {
-        /* Format at offset 0 (relative to partition), G_PARTITION_OFFSET is set */
         unsafe { fat_format_at(0, part_sectors); }
     }
     loader_console_install(b"Format done\0" as *const u8, 20);
@@ -471,8 +558,6 @@ pub fn loader_install_screen() {
         if unsafe { fat_exists(b"/\0" as *const u8) } != 0 { /* Root exists */ }
         if unsafe { fat_exists(b"/system\0" as *const u8) } == 0 { unsafe { fat_mkdir(b"/system\0" as *const u8); } }
         if unsafe { fat_exists(b"/drivers\0" as *const u8) } == 0 { unsafe { fat_mkdir(b"/drivers\0" as *const u8); } }
-        if unsafe { fat_exists(b"/EFI\0" as *const u8) } == 0 { unsafe { fat_mkdir(b"/EFI\0" as *const u8); } }
-        if unsafe { fat_exists(b"/EFI/BOOT\0" as *const u8) } == 0 { unsafe { fat_mkdir(b"/EFI/BOOT\0" as *const u8); } }
     }
 
     /* Extract */
@@ -489,13 +574,24 @@ pub fn loader_install_screen() {
         }
     }
 
-    /* Bootloader */
-    loader_console_install(b"Installing bootloader...\0" as *const u8, 75);
-    unsafe { fat_install_bootloader(dev_handle, part_start); }
+    if !install_ok {
+        unsafe {
+            term_set_fg(0xFF0000);
+            term_writeln(b"ERROR: Failed to extract system files.\0" as *const u8);
+            term_writeln(b"The install.pkg may be corrupted.\0" as *const u8);
+            term_set_fg(0xFFFFFF);
+        }
+    }
 
+    /* Register UEFI boot entry */
     if register_uefi {
         loader_console_install(b"Registering UEFI boot entry...\0" as *const u8, 80);
-        let reg_rc = unsafe { lumie_efi_register_boot_entry_for_target(dev_handle, part_start, part_sectors) };
+        let reg_rc = if !is_partition && esp_part_start != 0 {
+            /* Dual partition: register boot entry pointing to ESP */
+            unsafe { lumie_efi_register_boot_entry_for_target(dev_handle, esp_part_start, esp_part_sectors) }
+        } else {
+            unsafe { lumie_efi_register_boot_entry_for_target(dev_handle, part_start, part_sectors) }
+        };
         if reg_rc != 0 {
             unsafe {
                 term_set_fg(0xFF0000);
@@ -503,6 +599,17 @@ pub fn loader_install_screen() {
                 term_writeln(b"\0" as *const u8);
                 term_writeln(b"WARNING: UEFI boot registration failed.\0" as *const u8);
                 term_writeln(b"Press F11 (or Esc/F12) during boot and select LumieOS manually.\0" as *const u8);
+                term_set_fg(0xFFFFFF);
+            }
+        } else {
+            unsafe {
+                term_set_fg(0x00CC00);
+                term_writeln(b"UEFI boot entry registered successfully.\0" as *const u8);
+                if has_other_os {
+                    term_writeln(b"LumieOS added after existing boot entries.\0" as *const u8);
+                } else {
+                    term_writeln(b"LumieOS set as default boot option.\0" as *const u8);
+                }
                 term_set_fg(0xFFFFFF);
             }
         }
@@ -575,7 +682,13 @@ pub fn loader_install_screen() {
     loader_console_install(b"Installation complete!\0" as *const u8, 100);
     unsafe {
         term_writeln(b"\0" as *const u8);
+        term_set_fg(0x00CC00);
         term_writeln(b"LumieOS installed successfully!\0" as *const u8);
+        term_set_fg(0xFFFFFF);
+        if !is_partition && esp_part_start != 0 {
+            term_writeln(b"  ESP (FAT32): Bootloader installed\0" as *const u8);
+            term_writeln(b"  LumFS: System files installed\0" as *const u8);
+        }
         term_writeln(b"install.pkg has been removed.\0" as *const u8);
         term_writeln(b"\0" as *const u8);
         term_writeln(b"Remove the installation media and press any key to reboot...\0" as *const u8);

@@ -289,6 +289,184 @@ fn make_partition_entry(
 
 pub type GptProgressCb = Option<unsafe extern "efiapi" fn(*const u8, i32)>;
 
+/// Result of creating a dual-partition GPT layout:
+/// - ESP partition (FAT32) for bootloader
+/// - LumFS partition for the OS
+pub struct DualPartitionResult {
+    pub esp_start: u64,
+    pub esp_sectors: u64,
+    pub lumfs_start: u64,
+    pub lumfs_sectors: u64,
+}
+
+pub fn create_gpt_dual_partitions(
+    device_handle: efi_handle,
+    size_gb: u64,
+    esp_size_mb: u64,
+    progress: GptProgressCb,
+) -> Option<DualPartitionResult> {
+    let bio = match get_block_io(device_handle) { Some(b) => b, None => return None };
+    let total_sectors = disk_total_sectors(device_handle);
+    let sector_size = disk_sector_size(device_handle);
+    if total_sectors < GPT_ALIGNMENT + 100 { return None; }
+
+    let last_usable_lba = total_sectors - GPT_ALIGNMENT - 33 - 1;
+
+    /* Calculate ESP size in sectors (default 260 MB, minimum 100 MB) */
+    let esp_mb = if esp_size_mb < 100 { 260 } else { esp_size_mb };
+    let esp_sectors_raw = (esp_mb * 1024 * 1024) / sector_size;
+    let esp_sectors = (esp_sectors_raw / GPT_ALIGNMENT) * GPT_ALIGNMENT;
+    if esp_sectors < GPT_ALIGNMENT { return None; }
+
+    /* Calculate LumFS partition size */
+    let requested_sectors = (size_gb * 1024 * 1024 * 1024) / sector_size;
+    let max_lumfs = last_usable_lba - GPT_ALIGNMENT - esp_sectors;
+    let lumfs_sectors_raw = if requested_sectors > max_lumfs { max_lumfs } else { requested_sectors };
+    let lumfs_sectors = (lumfs_sectors_raw / GPT_ALIGNMENT) * GPT_ALIGNMENT;
+    if lumfs_sectors < GPT_ALIGNMENT { return None; }
+
+    /* Partition layout:
+     *   LBA 0:       Protective MBR
+     *   LBA 1:       GPT Header
+     *   LBA 2-33:    Partition entries (128 entries * 128 bytes = 32 sectors)
+     *   LBA 34..:    ESP starts at GPT_ALIGNMENT (2048)
+     *   After ESP:   LumFS starts
+     */
+    let esp_start = GPT_ALIGNMENT;
+    let esp_end = esp_start + esp_sectors - 1;
+    let lumfs_start = esp_end + 1;
+    let lumfs_end = lumfs_start + lumfs_sectors - 1;
+
+    let disk_guid: [u8; 16] = [
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+    ];
+
+    let esp_guid: [u8; 16] = [
+        0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11,
+        0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B,
+    ];
+
+    let lumfs_guid: [u8; 16] = [
+        0xAF, 0xE4, 0x3C, 0xE8, 0x65, 0xCF, 0x4C, 0x4A,
+        0xB5, 0x7D, 0x5A, 0x4A, 0x7F, 0x4B, 0xEE, 0x2B,
+    ];
+
+    /* Build partition entries (2 entries: ESP + LumFS) */
+    let mut partition_entries: [u8; 128 * 128] = [0u8; 128 * 128];
+
+    /* Entry 0: ESP */
+    let mut esp_entry: GptPartitionEntry = unsafe { core::mem::zeroed() };
+    esp_entry.partition_type_guid = EFI_SYSTEM_PARTITION_GUID;
+    esp_entry.unique_partition_guid = esp_guid;
+    esp_entry.starting_lba = esp_start;
+    esp_entry.ending_lba = esp_end;
+    esp_entry.attributes = 0x0000000000000001; /* Required for ESP */
+    let esp_name = b"E\0F\0I\0 \0S\0y\0s\0t\0e\0m\0 \0P\0a\0r\0t\0i\0t\0i\0o\0n\0\0\0";
+    let mut ni = 0;
+    while ni < esp_name.len() && ni < 72 {
+        partition_entries[0 * 128 + 56 + ni] = esp_name[ni];
+        ni += 1;
+    }
+    /* Copy ESP entry fields */
+    let esp_entry_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &esp_entry as *const GptPartitionEntry as *const u8,
+            core::mem::size_of::<GptPartitionEntry>(),
+        )
+    };
+    /* Write partition type GUID, unique GUID, start, end, attributes */
+    partition_entries[0 * 128..0 * 128 + 16].copy_from_slice(&esp_entry.partition_type_guid);
+    partition_entries[0 * 128 + 16..0 * 128 + 32].copy_from_slice(&esp_entry.unique_partition_guid);
+    let start_bytes = esp_start.to_le_bytes();
+    let end_bytes = esp_end.to_le_bytes();
+    let attr_bytes = esp_entry.attributes.to_le_bytes();
+    partition_entries[0 * 128 + 32..0 * 128 + 40].copy_from_slice(&start_bytes);
+    partition_entries[0 * 128 + 40..0 * 128 + 48].copy_from_slice(&end_bytes);
+    partition_entries[0 * 128 + 48..0 * 128 + 56].copy_from_slice(&attr_bytes);
+
+    /* Entry 1: LumFS */
+    let mut lumfs_entry: GptPartitionEntry = unsafe { core::mem::zeroed() };
+    lumfs_entry.partition_type_guid = LUMIEOS_PARTITION_GUID;
+    lumfs_entry.unique_partition_guid = lumfs_guid;
+    lumfs_entry.starting_lba = lumfs_start;
+    lumfs_entry.ending_lba = lumfs_end;
+    lumfs_entry.attributes = 0;
+    let lumfs_name = b"L\0u\0m\0i\0e\0O\0S\0\0\0";
+    let mut ni2 = 0;
+    while ni2 < lumfs_name.len() && ni2 < 72 {
+        partition_entries[1 * 128 + 56 + ni2] = lumfs_name[ni2];
+        ni2 += 1;
+    }
+    partition_entries[1 * 128..1 * 128 + 16].copy_from_slice(&lumfs_entry.partition_type_guid);
+    partition_entries[1 * 128 + 16..1 * 128 + 32].copy_from_slice(&lumfs_entry.unique_partition_guid);
+    let start_bytes2 = lumfs_start.to_le_bytes();
+    let end_bytes2 = lumfs_end.to_le_bytes();
+    partition_entries[1 * 128 + 32..1 * 128 + 40].copy_from_slice(&start_bytes2);
+    partition_entries[1 * 128 + 40..1 * 128 + 48].copy_from_slice(&end_bytes2);
+    partition_entries[1 * 128 + 48..1 * 128 + 56].copy_from_slice(&[0u8; 8]);
+
+    let entries_crc = crc32(partition_entries.as_ptr(), (128 * 128) as u64);
+
+    if let Some(cb) = progress {
+        unsafe { cb(b"Writing protective MBR...\\0" as *const u8, 10); }
+    }
+    let mut mbr: [u8; 512] = [0u8; 512];
+    make_protective_mbr(&mut mbr, total_sectors);
+    if write_sectors(bio, 0, 1, mbr.as_ptr()) != 0 {
+        if let Some(cb) = progress {
+            unsafe { cb(b"ERROR: Failed to write MBR.\\0" as *const u8, 0); }
+        }
+        return None;
+    }
+
+    if let Some(cb) = progress {
+        unsafe { cb(b"Writing GPT header...\\0" as *const u8, 40); }
+    }
+    let mut header: GptHeader = unsafe { core::mem::zeroed() };
+    make_gpt_header(&mut header, total_sectors, GPT_FIRST_USABLE_LBA, last_usable_lba, &disk_guid, entries_crc);
+    header.crc32 = crc32(&header as *const GptHeader as *const u8, GPT_HEADER_SIZE as u64);
+    let mut header_sector: [u8; 512] = [0u8; 512];
+    unsafe {
+        ptr::copy_nonoverlapping(
+            &header as *const GptHeader as *const u8,
+            header_sector.as_mut_ptr(),
+            core::mem::size_of::<GptHeader>() as usize,
+        );
+    }
+    if write_sectors(bio, 1, 1, header_sector.as_ptr()) != 0 {
+        if let Some(cb) = progress {
+            unsafe { cb(b"ERROR: Failed to write GPT header.\\0" as *const u8, 0); }
+        }
+        return None;
+    }
+
+    if let Some(cb) = progress {
+        unsafe { cb(b"Writing partition entries...\\0" as *const u8, 70); }
+    }
+    let entries_bytes: usize = 128 * 128;
+    let entries_sectors = (entries_bytes + sector_size as usize - 1) / sector_size as usize;
+    if write_sectors(bio, GPT_PARTITIONS_START_LBA, entries_sectors as u64, partition_entries.as_ptr()) != 0 {
+        if let Some(cb) = progress {
+            unsafe { cb(b"ERROR: Failed to write partition entries.\\0" as *const u8, 0); }
+        }
+        return None;
+    }
+
+    flush_sectors(bio);
+
+    if let Some(cb) = progress {
+        unsafe { cb(b"GPT dual partition table created.\\0" as *const u8, 100); }
+    }
+
+    Some(DualPartitionResult {
+        esp_start,
+        esp_sectors,
+        lumfs_start,
+        lumfs_sectors,
+    })
+}
+
 pub fn create_gpt_partition(
     device_handle: efi_handle,
     size_gb: u64,

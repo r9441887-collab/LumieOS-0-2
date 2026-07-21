@@ -638,7 +638,13 @@ pub unsafe fn pit_get_ticks() -> u64 {
 }
 pub unsafe fn pcspkr_init() {}
 pub unsafe fn shell_run() {}
-pub unsafe fn exit_boot_services() {}
+pub unsafe fn exit_boot_services() {
+    /* In the loader context, this is intentionally a no-op.
+     * The loader uses UEFI boot services throughout its lifecycle.
+     * exit_boot_services() is only meaningful for the kernel itself,
+     * which manages its own memory after this point. */
+}
+
 pub unsafe fn lumie_efi_register_boot_entry() -> i32 {
     let st_ptr = crate::input::get_ld_st();
     if st_ptr.is_null() { return -1; }
@@ -776,7 +782,7 @@ pub unsafe fn lumie_efi_register_boot_entry() -> i32 {
 
     uefi_free(buf, total_size);
 
-    /* Update BootOrder: prepend our new entry */
+    /* Update BootOrder: append at end (not prepend) so existing OSes keep their position */
     let boot_order_name: [u16; 10] = [
         b'B' as u16, b'o' as u16, b'o' as u16, b't' as u16,
         b'O' as u16, b'r' as u16, b'd' as u16, b'e' as u16,

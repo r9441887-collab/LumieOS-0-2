@@ -356,6 +356,47 @@ pub extern "efiapi" fn lumie_loader_start(
     }
 
     display::loader_boot_screen();
+
+    /* Show boot diagnostics */
+    {
+        let w = unsafe { gop_get_width() };
+        let bg = display::ld_make_color(0x00, 0x00, 0x80);
+        let cyan = display::ld_make_color(0x00, 0xFF, 0xFF);
+        let green = display::ld_make_color(0x00, 0xCC, 0x00);
+        let red = display::ld_make_color(0xFF, 0x00, 0x00);
+
+        unsafe { gop_fill_rect(0, 0, w, 200, bg); }
+        display::loader_drv_draw_str(8, 8, cyan, bg, b"LumieOS Boot Diagnostics:");
+        display::loader_drv_draw_str(8, 28, green, bg, b"[OK] GOP initialized");
+        display::loader_drv_draw_str(8, 48, green, bg, b"[OK] Boot device found");
+        display::loader_drv_draw_str(8, 68, green, bg, b"[OK] FAT32 initialized");
+
+        /* Check critical files */
+        let files: &[(&[u8], &[u8])] = &[
+            (b"/system/kernel.lkrn\0", b"Kernel\0"),
+            (b"/system/shell.lsh\0", b"Shell\0"),
+            (b"/drivers/kbd.ldrv\0", b"Keyboard Driver\0"),
+            (b"/drivers/fs.ldrv\0", b"Filesystem Driver\0"),
+        ];
+
+        let mut y = 88u32;
+        for &(path, name) in files {
+            let exists = unsafe { fat_exists(path.as_ptr()) } == 1;
+            let color = if exists { green } else { red };
+            let status: &[u8] = if exists { b"[OK] " } else { b"[!!] " };
+            let mut msg: [u8; 80] = [0u8; 80];
+            let mut mp = 0;
+            for &c in status { if mp < 79 { msg[mp] = c; mp += 1; } }
+            for &c in name { if c == 0 { break; } if mp < 79 { msg[mp] = c; mp += 1; } }
+            if !exists {
+                let missing = b" - MISSING!";
+                for &c in missing { if mp < 79 { msg[mp] = c; mp += 1; } }
+            }
+            display::loader_drv_draw_str(8, y, color, bg, &msg[..mp]);
+            y += 20;
+        }
+    }
+
     unsafe { drvcheck_run_scan(); }
 
     /* 3 boot attempts */
@@ -428,6 +469,15 @@ pub extern "efiapi" fn lumie_loader_start(
 
     /* Load kernel module first */
     {
+        let bg = display::ld_make_color(0x00, 0x00, 0x80);
+        let cyan = display::ld_make_color(0x00, 0xFF, 0xFF);
+        let green = display::ld_make_color(0x00, 0xCC, 0x00);
+        let red = display::ld_make_color(0xFF, 0x00, 0x00);
+        let w = unsafe { gop_get_width() };
+        let h = unsafe { gop_get_height() };
+
+        display::loader_drv_draw_str(8, h - 80, cyan, bg, b"Loading kernel...");
+
         let mut kernel_mod: SysModule = unsafe { core::mem::zeroed() };
         let kr = unsafe {
             sys_load(
@@ -436,27 +486,85 @@ pub extern "efiapi" fn lumie_loader_start(
                 &mut kernel_mod as *mut SysModule,
             )
         };
-        if kr == 0 && !kernel_mod.entry.is_null() {
-            unsafe {
-                let entry_fn: fn(*mut SysBootInfo, *mut *mut c_void) -> i32 =
-                    core::mem::transmute(kernel_mod.entry);
-                let mut api: *mut c_void = ptr::null_mut();
-                entry_fn(&mut boot_info, &mut api);
+
+        if kr != 0 {
+            let mut msg: [u8; 64] = [0u8; 64];
+            let mut mp = 0;
+            for &c in b"ERROR: kernel load failed (code \0" { if c == 0 { break; } if mp < 63 { msg[mp] = c; mp += 1; } }
+            let mut num: [u8; 8] = [0u8; 8];
+            unsafe { lumie_std::format::lumie_itoa(kr as i64, num.as_mut_ptr(), 10); }
+            for &c in num.iter() { if c == 0 { break; } if mp < 63 { msg[mp] = c; mp += 1; } }
+            for &c in b")\0" { if c == 0 { break; } if mp < 63 { msg[mp] = c; mp += 1; } }
+            msg[mp] = 0;
+            display::loader_drv_draw_str(8, h - 60, red, bg, &msg[..mp + 1]);
+
+            /* Show error description */
+            let reason: &[u8] = match kr {
+                -1 => b"Invalid arguments\0",
+                -2 => b"File too small\0",
+                -3 => b"Memory allocation failed\0",
+                -4 => b"File read error\0",
+                -5 => b"Invalid module magic\0",
+                -6 => b"Invalid code size\0",
+                -7 => b"Load base allocation failed\0",
+                _ => b"Unknown error\0",
+            };
+            display::loader_drv_draw_str(8, h - 40, red, bg, reason);
+            unsafe { pit_stall(5000000); } /* Show error for 5 seconds */
+            return;
+        }
+
+        if kernel_mod.entry.is_null() {
+            display::loader_drv_draw_str(8, h - 60, red, bg, b"ERROR: kernel entry point is NULL\0");
+            unsafe { pit_stall(5000000); }
+            return;
+        }
+
+        display::loader_drv_draw_str(8, h - 60, green, bg, b"[OK] Kernel loaded successfully\0");
+
+        unsafe {
+            let entry_fn: fn(*mut SysBootInfo, *mut *mut c_void) -> i32 =
+                core::mem::transmute(kernel_mod.entry);
+            let mut api: *mut c_void = ptr::null_mut();
+            let init_rc = entry_fn(&mut boot_info, &mut api);
+            if init_rc != 0 {
+                let mut msg: [u8; 64] = [0u8; 64];
+                let mut mp = 0;
+                for &c in b"ERROR: kernel init failed (code \0" { if c == 0 { break; } if mp < 63 { msg[mp] = c; mp += 1; } }
+                let mut num: [u8; 8] = [0u8; 8];
+                unsafe { lumie_std::format::lumie_itoa(init_rc as i64, num.as_mut_ptr(), 10); }
+                for &c in num.iter() { if c == 0 { break; } if mp < 63 { msg[mp] = c; mp += 1; } }
+                for &c in b")\0" { if c == 0 { break; } if mp < 63 { msg[mp] = c; mp += 1; } }
+                msg[mp] = 0;
+                display::loader_drv_draw_str(8, h - 40, red, bg, &msg[..mp + 1]);
+                unsafe { pit_stall(5000000); }
+                return;
             }
         }
+        display::loader_drv_draw_str(8, h - 40, green, bg, b"[OK] Kernel initialized\0");
     }
 
     /* GPU driver */
     {
+        let bg = display::ld_make_color(0x00, 0x00, 0x80);
+        let cyan = display::ld_make_color(0x00, 0xFF, 0xFF);
+        let green = display::ld_make_color(0x00, 0xCC, 0x00);
+        let yellow = display::ld_make_color(0xFF, 0xFF, 0x00);
+        let w = unsafe { gop_get_width() };
+        let h = unsafe { gop_get_height() };
+
+        display::loader_drv_draw_str(8, h - 20, cyan, bg, b"Loading GPU driver...");
+
         let mut mod_: SysModule = unsafe { core::mem::zeroed() };
-        if unsafe {
+        let gpu_rc = unsafe {
             sys_load(
                 b"/drivers/nv_gpu.sys\0" as *const u8,
                 &mut boot_info as *mut SysBootInfo,
                 &mut mod_ as *mut SysModule,
             )
-        } == 0 && !mod_.entry.is_null()
-        {
+        };
+
+        if gpu_rc == 0 && !mod_.entry.is_null() {
             unsafe {
                 let mut api: *mut c_void = ptr::null_mut();
                 let entry_fn: fn(*mut SysBootInfo, *mut *mut c_void) -> i32 =
@@ -464,9 +572,16 @@ pub extern "efiapi" fn lumie_loader_start(
                 let ret = entry_fn(&mut boot_info, &mut api);
                 if ret == 0 && !api.is_null() {
                     g_nv_gpu_api = api;
+                    display::loader_drv_draw_str(8, h - 20, green, bg, b"[OK] GPU driver loaded\0");
+                } else {
+                    display::loader_drv_draw_str(8, h - 20, yellow, bg, b"[!!] GPU driver init failed, using fallback\0");
                 }
             }
+        } else {
+            display::loader_drv_draw_str(8, h - 20, yellow, bg, b"[!!] GPU driver not found, using framebuffer\0");
         }
+
+        unsafe { pit_stall(500000); } /* Brief pause to show status */
     }
 
     unsafe { gop_nv_init(); desktop_init(); desktop_run(); }
