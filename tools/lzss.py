@@ -66,7 +66,7 @@ def compress(data: bytes) -> bytes:
                                     if ml2 > ml + 1:
                                         lazy_better = True
 
-                            if not lazy_better:
+                            if not lazy_better and dist <= 65535:
                                 payload = struct.pack('<H', dist) + bytes([ml - 3])
                                 match_advance = ml
 

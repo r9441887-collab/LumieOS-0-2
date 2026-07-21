@@ -23,12 +23,29 @@ else:
     else:
         # Try rust-lld from nightly toolchain
         import glob as globmod
-        for p in globmod.glob(os.path.expanduser('~/.rustup/toolchains/nightly-*/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld')):
+        
+        # First try lld-link directly (Windows naming)
+        for p in globmod.glob(os.path.expanduser('~/.rustup/toolchains/nightly-*/lib/rustlib/*/bin/gcc-ld/lld-link')):
             if os.path.exists(p):
                 LLD = p
                 break
+        
+        # Then try ld.lld (Unix naming)
         if not LLD:
-            # Windows: search for lld-link.exe
+            for p in globmod.glob(os.path.expanduser('~/.rustup/toolchains/nightly-*/lib/rustlib/*/bin/gcc-ld/ld.lld')):
+                if os.path.exists(p):
+                    LLD = p
+                    break
+        
+        # Try rust-lld as last resort
+        if not LLD:
+            for p in globmod.glob(os.path.expanduser('~/.rustup/toolchains/nightly-*/lib/rustlib/*/bin/rust-lld')):
+                if os.path.exists(p):
+                    LLD = p
+                    break
+        
+        # Windows: search for lld-link.exe
+        if not LLD:
             for root, dirs, files in os.walk(os.path.expanduser('~/.rustup')):
                 for f in files:
                     if f.lower() == 'lld-link.exe':
@@ -38,8 +55,11 @@ else:
                     break
 
 if not LLD:
-    print("ERROR: lld-link not found", file=sys.stderr)
+    print("ERROR: lld-link not found. Set LLD_LINK environment variable.", file=sys.stderr)
+    print("Example: export LLD_LINK=$(find ~/.rustup -name 'lld-link' | head -1)", file=sys.stderr)
     sys.exit(1)
+
+print(f"Using linker: {LLD}")
 
 def latest_a(pattern):
     files = glob.glob(os.path.join(TARGET_DEPS, pattern))
@@ -61,6 +81,7 @@ def link_and_convert(crate_name, a_file, output_path, magic, mod_name):
     try:
         dll_path = os.path.join(tmpdir, f'{crate_name}.dll')
 
+        # Use lld-link with Windows-style flags
         cmd = [
             LLD, '/dll', '/noentry', '/nodefaultlib',
             '/machine:x64', '/nologo',
